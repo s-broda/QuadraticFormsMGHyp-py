@@ -13,8 +13,14 @@ license = "MIT"
 license-files = ["LICENSE"]
 dependencies = ["numpy"]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.urls]
 Repository = "https://github.com/s-broda/es4mgh-c"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -4,6 +4,7 @@ include src/es4mgh/_native.c
 include src/es4mgh/__init__.py
 include README.md
 include LICENSE
+include tests/*.py
 prune build
 global-exclude *.o
 global-exclude *.so

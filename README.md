@@ -34,6 +34,17 @@ ccdf, es = fit.eval(x)
 
 ## Accuracy
 
-Thresholds use a mapped Gauss–Legendre rule, 32 to 64 nodes depending on the law. More than 24 thresholds are evaluated on a short Chebyshev grid and interpolated. Against a 96-node reference, tail errors on the bundled problems are about `1e-9` or smaller. Expected-shortfall error stays under about `1e-4` on the general GH problem and is far smaller on the NIG, Student-t, and two-stage least squares problems.
+Thresholds use a mapped Gauss–Legendre rule, 32 to 64 nodes depending on the law. More than 24 thresholds are evaluated on a short Chebyshev grid and interpolated.
+
+## Tests
+
+`pytest` is an optional extra.
+
+```bash
+pip install ".[test]"
+pytest
+```
+
+The checks rebuild the option-portfolio and two-stage least squares examples from [QuadraticFormsMGHyp](https://github.com/s-broda/QuadraticFormsMGHyp.jl) and compare the package with a separate 96-node quadrature of the same integral. On the portfolio the tail probability stays within about `1e-8` of that rule. Expected shortfall stays within about `1e-6` where the tail probability is above 1%, and within about `5e-4` at the far end of the grid. GitHub Actions runs the tests on Linux and macOS. Windows is not included, because the C code uses C11 `complex.h`.
 
 Released under the MIT License.
