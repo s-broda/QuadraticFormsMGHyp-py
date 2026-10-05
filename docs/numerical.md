@@ -19,7 +19,7 @@ A vector longer than 24 distinct thresholds is replaced by the Chebyshev grid, i
 
 On the scalar path, macOS splits the threshold index into contiguous chunks and runs one Grand Central Dispatch worker per chunk, at most 64. OpenMP, when the extension was built with it, makes the same split. Windows evaluates that path on the calling thread.
 
-`threads <= 0` selects the Apple performance-core count on that path, and the online CPU count elsewhere. The split is reached only when three things are true: the fast evaluation declined, `threads > 1`, and the remaining length is at least 4. NIG, a $\psi = 0$ law, and the general-GH series take the fast evaluation, so they do not split the vector. For a long half-integer problem the workers see the Chebyshev grid, and the original thresholds are interpolated on the calling thread.
+`threads <= 0` selects the logical CPU count. The split is reached only when three things are true: the fast evaluation declined, `threads > 1`, and the remaining length is at least 4. NIG, a $\psi = 0$ law, and the general-GH series take the fast evaluation, so they do not split the vector. For a long half-integer problem the workers see the Chebyshev grid, and the original thresholds are interpolated on the calling thread.
 
 ## Accuracy
 

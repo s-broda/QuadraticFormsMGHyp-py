@@ -1140,6 +1140,25 @@ static void *arena_acquire(size_t bytes) {
     return arena_buf;
 }
 
+static int host_threads(void) {
+    static int cached = -1;
+    if (cached > 0) return cached;
+    int np = 0;
+#if defined(__APPLE__)
+    size_t sz = sizeof(np);
+    if (sysctlbyname("hw.logicalcpu", &np, &sz, NULL, 0) != 0) np = 0;
+#elif defined(_WIN32)
+    DWORD nproc = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    np = nproc > 0 ? (int)nproc : 1;
+#else
+    long all = sysconf(_SC_NPROCESSORS_ONLN);
+    np = all > 0 ? (int)all : 1;
+#endif
+    if (np < 1) np = 1;
+    cached = np;
+    return cached;
+}
+
 static int use_slow(void) {
     static int v = -1;
     if (v < 0) {
@@ -1491,23 +1510,7 @@ void es4mgh_eval(const es4mgh *E, int n, const double *x,
         return;
     }
     if (fast_batch(E, n, x, ccdf, es)) return;
-    if (nthreads <= 0) {
-        int np = 0;
-#if defined(__APPLE__)
-        size_t sz = sizeof(np);
-        if (sysctlbyname("hw.perflevel0.physicalcpu", &np, &sz, NULL, 0) != 0) np = 0;
-#endif
-        if (np <= 0) {
-#if defined(_WIN32)
-            DWORD nproc = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
-            np = nproc > 0 ? (int)nproc : 1;
-#else
-            long all = sysconf(_SC_NPROCESSORS_ONLN);
-            np = all > 0 ? (int)all : 1;
-#endif
-        }
-        nthreads = np;
-    }
+    if (nthreads <= 0) nthreads = host_threads();
     if (nthreads > n) nthreads = n;
     if (nthreads <= 1 || n < 4) {
         Chunk c = { E, x, ccdf, es, E->kk, 0, n };

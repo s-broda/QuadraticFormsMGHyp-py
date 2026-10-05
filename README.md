@@ -63,7 +63,7 @@ cdf, ccdf, pm, es = fit.eval(x)
 
 `gam` is the skewness vector γ. `a`, `mu`, and `gam` are length-`d` vectors. `A` and `C` are `d × d` row-major matrices, either shape `(d, d)` or a flat vector of length `d * d`. In `from_spectral`, `omega`, `d`, and `e` are the spectral weights and the two coefficient vectors.
 
-`threads <= 0` asks for one worker per Apple performance core, or per online CPU elsewhere. That pool runs only on the scalar path. NIG, ψ = 0, and the general-GH series evaluate the whole vector on the calling thread. More than 24 thresholds are computed on a short Chebyshev grid and interpolated.
+`threads <= 0` asks for one worker per logical CPU. That pool runs only on the scalar path. NIG, ψ = 0, and the general-GH series evaluate the whole vector on the calling thread. More than 24 thresholds are computed on a short Chebyshev grid and interpolated.
 
 `close()` releases the C object. A `with` block does the same, as does collection.
 

@@ -12,8 +12,7 @@
      ccdf[i] = P(L > x[i])
      es[i]   = E[L | L > x[i]]
    Either pointer may be NULL. Matrices are row-major.
-   nthreads <= 0 uses the performance-core count on Apple and the
-   online CPU count elsewhere. Vectors longer than 24 thresholds are
+   nthreads <= 0 uses the logical CPU count. Vectors longer than 24 thresholds are
    evaluated on a short Chebyshev grid and interpolated. */
 
 typedef struct es4mgh es4mgh;
