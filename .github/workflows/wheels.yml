@@ -1,0 +1,85 @@
+name: wheels
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+
+jobs:
+  build_wheels:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux-x86_64
+            runs-on: ubuntu-latest
+          - os: linux-aarch64
+            runs-on: ubuntu-24.04-arm
+          - os: windows-x86_64
+            runs-on: windows-latest
+          - os: windows-arm64
+            runs-on: windows-11-arm
+          - os: macos-x86_64
+            runs-on: macos-15-intel
+          - os: macos-arm64
+            runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Locate clang-cl
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $clang = Get-Command clang-cl -ErrorAction SilentlyContinue
+          if (-not $clang -and (Test-Path "C:\Program Files\LLVM\bin\clang-cl.exe")) {
+            "C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+            $env:Path = "C:\Program Files\LLVM\bin;" + $env:Path
+          }
+          if (Get-Command clang-cl -ErrorAction SilentlyContinue) {
+            clang-cl --version
+          } else {
+            Write-Host "clang-cl is not on PATH; setup.py searches LLVM and Visual Studio"
+          }
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.3.0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  build_sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build sdist
+        run: pipx run build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist/*.tar.gz
+
+  upload_pypi:
+    name: publish
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/QuadraticFormsMGHyp/
+    permissions:
+      id-token: write
+    if: github.event_name == 'release' && github.event.action == 'published'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
