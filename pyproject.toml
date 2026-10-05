@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "es4mgh"
+name = "QuadraticFormsMGHyp"
 version = "0.1.0"
 description = "Tail probability and expected shortfall of a quadratic form in a multivariate generalized hyperbolic vector"
 readme = "README.md"
@@ -11,13 +11,33 @@ requires-python = ">=3.8"
 authors = [{ name = "Simon Broda" }]
 license = "MIT"
 license-files = ["LICENSE"]
+keywords = [
+    "generalized hyperbolic",
+    "quadratic form",
+    "expected shortfall",
+    "tail probability",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
 dependencies = ["numpy"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+docs = ["sphinx>=7.2,<8", "myst-parser>=3,<4", "furo>=2024.1"]
 
 [project.urls]
-Repository = "https://github.com/s-broda/es4mgh-c"
+Homepage = "https://github.com/s-broda/QuadraticFormsMGHyp-py"
+Documentation = "https://s-broda.github.io/QuadraticFormsMGHyp-py/"
+Repository = "https://github.com/s-broda/QuadraticFormsMGHyp-py"
+Changelog = "https://github.com/s-broda/QuadraticFormsMGHyp-py/blob/main/CHANGELOG.md"
+Julia = "https://github.com/s-broda/QuadraticFormsMGHyp.jl"
+Fortran = "https://github.com/s-broda/es4mgh"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -25,5 +45,8 @@ testpaths = ["tests"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+QuadraticFormsMGHyp = ["py.typed"]
+
 [tool.setuptools.exclude-package-data]
-es4mgh = ["*.c"]
+QuadraticFormsMGHyp = ["*.c"]

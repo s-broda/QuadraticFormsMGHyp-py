@@ -298,7 +298,7 @@ static PyMethodDef methods[] = {
 static struct PyModuleDef moduledef = {
     PyModuleDef_HEAD_INIT,
     "_native",
-    "C binding for the es4mgh tail probability and expected shortfall.",
+    "C binding for the QuadraticFormsMGHyp tail probability and expected shortfall.",
     -1,
     methods};
 

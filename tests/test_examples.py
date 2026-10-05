@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-import es4mgh
+import QuadraticFormsMGHyp
 
 from examples import blsdelta, blsgamma, blsprice, blstheta, portfolio, twosls
 from quadrature import gil_pelaez
@@ -23,7 +23,7 @@ def test_portfolio_matches_quadrature():
     assert problem["variance"] == pytest.approx(1.0, abs=1e-12)
     assert problem["C"] == pytest.approx(np.diag(np.full(10, problem["scale"])), abs=1e-12)
 
-    fit = es4mgh.QuadraticForm(
+    fit = QuadraticFormsMGHyp.QuadraticForm(
         problem["a0"], problem["a"], problem["A"], problem["C"],
         problem["mu"], problem["gam"], problem["lam"], problem["chi"], problem["psi"],
     )
@@ -58,7 +58,7 @@ def test_twosls_matches_quadrature():
     ccdf_gap = 0.0
     es_gap = 0.0
     for problem in cases:
-        fit = es4mgh.QuadraticForm(
+        fit = QuadraticFormsMGHyp.QuadraticForm(
             problem["a0"], problem["a"], problem["A"], problem["C"],
             problem["mu"], problem["gam"], problem["lam"], problem["chi"], problem["psi"],
         )
@@ -68,3 +68,27 @@ def test_twosls_matches_quadrature():
         es_gap = max(es_gap, float(np.max(np.abs(es - ref_es))))
     assert ccdf_gap < 1e-8, "max |ccdf error| = %g" % ccdf_gap
     assert es_gap < 1e-7, "max |es error| = %g" % es_gap
+
+
+def test_qfmgh_matches_the_class_and_a_scalar():
+    problem = portfolio()
+    args = (
+        problem["a0"], problem["a"], problem["A"], problem["C"],
+        problem["mu"], problem["gam"], problem["lam"], problem["chi"], problem["psi"],
+    )
+    grid = problem["x"][:5]
+    with QuadraticFormsMGHyp.QuadraticForm(*args) as fit:
+        assert repr(fit) == "QuadraticForm(dimension=10)"
+        ccdf, es = fit.eval(grid, threads=1)
+    with pytest.raises(RuntimeError):
+        fit.eval(grid[:1])
+
+    got_ccdf, got_es = QuadraticFormsMGHyp.qfmgh(grid, *args, threads=1)
+    assert got_ccdf == pytest.approx(ccdf, abs=1e-12)
+    assert got_es == pytest.approx(es, abs=1e-12)
+    one_ccdf, one_es = QuadraticFormsMGHyp.qfmgh(float(grid[0]), *args, threads=1)
+    assert isinstance(one_ccdf, float) and isinstance(one_es, float)
+    assert one_ccdf == pytest.approx(float(ccdf[0]), abs=1e-12)
+    assert one_es == pytest.approx(float(es[0]), abs=1e-12)
+    with pytest.raises(TypeError):
+        QuadraticFormsMGHyp.qfmgh(float(grid[0]), *args, do_spa=True)

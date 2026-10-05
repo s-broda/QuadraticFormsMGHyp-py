@@ -1,4 +1,4 @@
-"""Build the es4mgh C extension. Metadata lives in pyproject.toml.
+"""Build the QuadraticFormsMGHyp C extension. Metadata lives in pyproject.toml.
 
 Windows compiles with clang-cl and links with link.exe. clang-cl provides
 C11 complex and targets the MSVC ABI, so a later wheel build uses this
@@ -125,7 +125,7 @@ class build_ext(_build_ext):
                 ext.extra_compile_args = ["/O2", "/std:c11"]
                 ext.libraries = []
                 ext.extra_link_args = [builtin]
-            print("es4mgh: compiling with " + clang)
+            print("QuadraticFormsMGHyp: compiling with " + clang)
         else:
             compile_args = ["-O3", "-std=c11", "-Wall"]
             link_args = []
@@ -144,8 +144,8 @@ setup(
     cmdclass={"build_ext": build_ext},
     ext_modules=[
         Extension(
-            "es4mgh._native",
-            sources=["src/es4mgh/_native.c", "es4mgh.c"],
+            "QuadraticFormsMGHyp._native",
+            sources=["src/QuadraticFormsMGHyp/_native.c", "es4mgh.c"],
             include_dirs=["."],
         )
     ],

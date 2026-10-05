@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+type: software
+title: QuadraticFormsMGHyp
+abstract: >-
+  Tail probability and expected shortfall of a quadratic form in a
+  multivariate generalized hyperbolic vector.
+authors:
+  - family-names: Broda
+    given-names: Simon A.
+repository-code: https://github.com/s-broda/QuadraticFormsMGHyp-py
+url: https://s-broda.github.io/QuadraticFormsMGHyp-py/
+license: MIT
+version: 0.1.0
+preferred-citation:
+  type: article
+  title: >-
+    On quadratic forms in multivariate generalized hyperbolic random
+    vectors
+  authors:
+    - family-names: Broda
+      given-names: Simon A.
+    - family-names: Zambrano
+      given-names: Juan Arismendi
+  journal: Biometrika
+  volume: 108
+  issue: 2
+  start: 413
+  end: 424
+  year: 2021
+  doi: 10.1093/biomet/asaa067
