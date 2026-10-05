@@ -36,4 +36,4 @@ ccdf, es = fit.eval(x)
 
 Thresholds use a mapped Gauss–Legendre rule, 32 to 64 nodes depending on the law. More than 24 thresholds are evaluated on a short Chebyshev grid and interpolated. Against a 96-node reference, tail errors on the bundled problems are about `1e-9` or smaller. Expected-shortfall error stays under about `1e-4` on the general GH problem and is far smaller on the NIG, Student-t, and two-stage least squares problems.
 
-No license is set.
+Released under the MIT License.
