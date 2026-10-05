@@ -1,5 +1,9 @@
 name: wheels
 
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]

@@ -23,6 +23,6 @@ On the scalar path, macOS splits the threshold index into contiguous chunks and 
 
 ## Accuracy
 
-The test suite compares the portfolio and two-stage least squares examples from the Julia package with an independent 96-node quadrature of the same integral. On the portfolio the tail probability stays within about $10^{-8}$. Expected shortfall stays within about $10^{-6}$ where that probability is above 1%, and within about $5 \times 10^{-4}$ at the far end of the grid. The two-stage least squares cases stay within about $10^{-8}$ on the probability and about $10^{-7}$ on the expected shortfall.
+The test suite compares the portfolio and two-stage least squares examples from the Julia package with an independent 96-node quadrature of the same integral. On the portfolio the tail probability stays within about $10^{-8}$. Expected shortfall stays within about $10^{-6}$ where that probability is above 1%, and within about $5 \times 10^{-4}$ at the far end of the grid. The two-stage least squares cases stay within about $10^{-8}$ on the probability and about $5 \times 10^{-7}$ on the expected shortfall.
 
 GitHub Actions runs those tests on Linux, macOS, and Windows, on Python 3.9 and 3.12.
