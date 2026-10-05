@@ -40,7 +40,16 @@ Julia = "https://github.com/s-broda/QuadraticFormsMGHyp.jl"
 Fortran = "https://github.com/s-broda/es4mgh"
 
 [tool.cibuildwheel]
-skip = ["pp*", "gp*", "*-win32", "*-*linux_i686", "cp3??t-*"]
+skip = [
+    "pp*",
+    "gp*",
+    "*-win32",
+    "*-*linux_i686",
+    "cp3??t-*",
+    # NumPy publishes Windows ARM64 wheels from Python 3.11.
+    "cp39-win_arm64",
+    "cp310-win_arm64",
+]
 test-extras = ["test"]
 test-command = "pytest -q {project}/tests"
 

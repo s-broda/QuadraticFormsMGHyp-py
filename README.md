@@ -41,7 +41,7 @@ From a checkout, `pip install .` does the same thing. `pip install ".[test]"` ad
 
 ## Wheels
 
-A push to `main` builds wheels with cibuildwheel and tests each one. The set is Linux x86_64 and arm64 (manylinux and musllinux), macOS x86_64 and arm64, and Windows x86_64 and arm64, for the CPython versions cibuildwheel still builds. Python 3.8 is not included. Publishing a GitHub release uploads those wheels and the source distribution to PyPI. The Windows wheels use the same clang-cl and Microsoft linker path as a source build.
+A push to `main` builds wheels with cibuildwheel and tests each one. The set is Linux x86_64 and arm64 (manylinux and musllinux), macOS x86_64 and arm64, and Windows x86_64 and arm64, for the CPython versions cibuildwheel still builds. Python 3.8 is not included. Windows arm64 wheels start at Python 3.11, which is the first release for which NumPy publishes that platform. Publishing a GitHub release uploads those wheels and the source distribution to PyPI. The Windows wheels use the same clang-cl and Microsoft linker path as a source build.
 
 ## API
 
