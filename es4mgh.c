@@ -274,7 +274,7 @@ static void gauss_legendre(int n, double *x, double *w) {
     }
 }
 
-static double fortran_ub(const double *omega, int ne) {
+static double integration_ub(const double *omega, int ne) {
     double *o = (double *)malloc((size_t)ne * sizeof(double));
     if (!o) return 0.5;
     int m = 0;
@@ -522,7 +522,7 @@ static es4mgh *build_from_spectral(
         return NULL;
     }
 
-    double ub = fortran_ub(omega_all, ne_all);
+    double ub = integration_ub(omega_all, ne_all);
     double *gx = (double *)malloc((size_t)nn * sizeof(double));
     double *gw = (double *)malloc((size_t)nn * sizeof(double));
     gauss_legendre(nn, gx, gw);

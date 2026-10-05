@@ -1,12 +1,9 @@
 build/
 dist/
 *.o
-*.mod
 *.so
 *.dylib
 *.egg-info/
 __pycache__/
 .pytest_cache/
-bench_c
-bench_fort
 .DS_Store
