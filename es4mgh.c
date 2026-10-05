@@ -1,11 +1,18 @@
 #include "es4mgh.h"
 
 #include <math.h>
-#include <complex.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include "es4_complex.h"
+#else
+#include <complex.h>
 #include <unistd.h>
+#endif
 #if defined(__APPLE__)
 #define ACCELERATE_NEW_LAPACK
 #include <Accelerate/Accelerate.h>
@@ -1491,8 +1498,13 @@ void es4mgh_eval(const es4mgh *E, int n, const double *x,
         if (sysctlbyname("hw.perflevel0.physicalcpu", &np, &sz, NULL, 0) != 0) np = 0;
 #endif
         if (np <= 0) {
+#if defined(_WIN32)
+            DWORD nproc = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+            np = nproc > 0 ? (int)nproc : 1;
+#else
             long all = sysconf(_SC_NPROCESSORS_ONLN);
             np = all > 0 ? (int)all : 1;
+#endif
         }
         nthreads = np;
     }

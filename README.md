@@ -12,7 +12,7 @@ The numerical work is the C routine in this repository. The Python package calls
 pip install "git+https://github.com/s-broda/es4mgh-c.git"
 ```
 
-This builds the extension on the machine where it is installed, so a C compiler and Python headers are required. `numpy` is installed as a dependency. On macOS the build links Accelerate.
+This builds the extension on the machine where it is installed, so a C compiler and Python headers are required. `numpy` is installed as a dependency. On macOS the build links Accelerate. On Windows the build uses clang-cl from LLVM and the Microsoft linker, which is the same toolchain a wheel will use. Install [LLVM](https://github.com/llvm/llvm-project/releases) and the Microsoft C++ build tools.
 
 From a checkout, `pip install .` does the same thing.
 
@@ -45,6 +45,6 @@ pip install ".[test]"
 pytest
 ```
 
-The checks rebuild the option-portfolio and two-stage least squares examples from [QuadraticFormsMGHyp](https://github.com/s-broda/QuadraticFormsMGHyp.jl) and compare the package with a separate 96-node quadrature of the same integral. On the portfolio the tail probability stays within about `1e-8` of that rule. Expected shortfall stays within about `1e-6` where the tail probability is above 1%, and within about `5e-4` at the far end of the grid. GitHub Actions runs the tests on Linux and macOS. Windows is not included, because the C code uses C11 `complex.h`.
+The checks rebuild the option-portfolio and two-stage least squares examples from [QuadraticFormsMGHyp](https://github.com/s-broda/QuadraticFormsMGHyp.jl) and compare the package with a separate 96-node quadrature of the same integral. On the portfolio the tail probability stays within about `1e-8` of that rule. Expected shortfall stays within about `1e-6` where the tail probability is above 1%, and within about `5e-4` at the far end of the grid. GitHub Actions runs the tests on Linux, macOS, and Windows.
 
 Released under the MIT License.
