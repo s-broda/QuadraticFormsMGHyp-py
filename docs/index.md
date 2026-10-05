@@ -35,13 +35,19 @@ At a threshold $x$ one evaluation returns $\mathrm{P}(L \le x)$, $\mathrm{P}(L >
 
 ## Installation
 
-A source install needs a C compiler and Python headers, because the extension is compiled on the machine. NumPy is installed as a dependency. Publishing a GitHub release uploads binary wheels to PyPI.
+```bash
+pip install QuadraticFormsMGHyp
+```
+
+Python 3.9 or newer is required. Wheels cover Linux x86_64 and arm64 (manylinux and musllinux), macOS x86_64 and arm64, and Windows amd64. Windows arm64 wheels start at Python 3.11. NumPy is installed as a dependency.
+
+A source install needs a C compiler and Python headers, because the extension is compiled on the machine. On macOS the build links Accelerate. On Windows it uses clang-cl from LLVM and the Microsoft linker. Install [LLVM](https://github.com/llvm/llvm-project/releases) and the Microsoft C++ build tools.
 
 ```bash
 pip install "git+https://github.com/s-broda/QuadraticFormsMGHyp-py.git"
 ```
 
-On macOS the build links Accelerate. On Windows it uses clang-cl from LLVM and the Microsoft linker. Install [LLVM](https://github.com/llvm/llvm-project/releases) and the Microsoft C++ build tools. From a checkout, `pip install .` does the same thing.
+From a checkout, `pip install .` does the same thing.
 
 ```bash
 pip install ".[test]"   # pytest

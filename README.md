@@ -27,21 +27,27 @@ cdf, ccdf, pm, es = qf.eval(np.linspace(-1.0, 3.0, 5))
 
 Construction diagonalizes the form. Further grids on the same object reuse that reduction, and each `eval` integrates the whole vector once.
 
-The numerical work is the C routine in this repository. The Julia package is [QuadraticFormsMGHyp.jl](https://github.com/s-broda/QuadraticFormsMGHyp.jl). The Fortran and Matlab code for the paper is in [s-broda/es4mgh](https://github.com/s-broda/es4mgh). This package is not on PyPI. The [documentation](https://s-broda.github.io/QuadraticFormsMGHyp-py/) has the model, the API, and the quadrature.
+The numerical work is the C routine in this repository. The Julia package is [QuadraticFormsMGHyp.jl](https://github.com/s-broda/QuadraticFormsMGHyp.jl). The Fortran and Matlab code for the paper is in [s-broda/es4mgh](https://github.com/s-broda/es4mgh). The package is on PyPI. The [documentation](https://s-broda.github.io/QuadraticFormsMGHyp-py/) has the model, the API, and the quadrature.
 
 ## Install
+
+```bash
+pip install QuadraticFormsMGHyp
+```
+
+Python 3.9 or newer is required. `numpy` is installed as a dependency. Wheels cover Linux x86_64 and arm64 (manylinux and musllinux), macOS x86_64 and arm64, and Windows amd64. Windows arm64 wheels start at Python 3.11.
+
+A source install builds the extension on the machine, so a C compiler and Python headers are required. On macOS the build links Accelerate. On Windows the build uses clang-cl from LLVM and the Microsoft linker. Install [LLVM](https://github.com/llvm/llvm-project/releases) and the Microsoft C++ build tools.
 
 ```bash
 pip install "git+https://github.com/s-broda/QuadraticFormsMGHyp-py.git"
 ```
 
-This builds the extension on the machine where it is installed, so a C compiler and Python headers are required. `numpy` is installed as a dependency. On macOS the build links Accelerate. On Windows the build uses clang-cl from LLVM and the Microsoft linker, which is the same toolchain a wheel will use. Install [LLVM](https://github.com/llvm/llvm-project/releases) and the Microsoft C++ build tools.
-
 From a checkout, `pip install .` does the same thing. `pip install ".[test]"` adds pytest. `pip install ".[docs]"` adds Sphinx.
 
 ## Wheels
 
-A push to `main` builds wheels with cibuildwheel and tests each one. The set is Linux x86_64 and arm64 (manylinux and musllinux), macOS x86_64 and arm64, and Windows x86_64 and arm64, for the CPython versions cibuildwheel still builds. Python 3.8 is not included. Windows arm64 wheels start at Python 3.11, which is the first release for which NumPy publishes that platform. Publishing a GitHub release uploads those wheels and the source distribution to PyPI. The Windows wheels use the same clang-cl and Microsoft linker path as a source build.
+A push to `main` builds wheels with cibuildwheel and tests each one. The set is Linux x86_64 and arm64 (manylinux and musllinux), macOS x86_64 and arm64, and Windows x86_64 and arm64, for the CPython versions cibuildwheel still builds. Python 3.8 is not included. Windows arm64 wheels start at Python 3.11, which is the first release for which NumPy publishes that platform. A GitHub release uploads those wheels and the source distribution to PyPI. The Windows wheels use the same clang-cl and Microsoft linker path as a source build.
 
 ## API
 
