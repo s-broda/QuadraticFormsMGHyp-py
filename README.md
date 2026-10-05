@@ -5,14 +5,13 @@
 
 Tail probability and expected shortfall of a quadratic form in a multivariate generalized hyperbolic vector.
 
-The loss is `L = a0 + a'X + X'A X`, with `X = μ + W γ + √W C Z`, `Z ~ N(0, I)`, and `W ~ GIG(λ, χ, ψ)`. At a threshold `x` the routine returns `P(L > x)` and `E[L | L > x]`.
+The loss is `L = a0 + a'X + X'A X`, with `X = μ + W γ + √W C Z`, `Z ~ N(0, I)`, and `W ~ GIG(λ, χ, ψ)`. One evaluation returns `P(L <= x)`, `P(L > x)`, the upper partial moment `E[L 1_{L > x}]`, and the expected shortfall `E[L | L > x]`.
 
 ```python
 import numpy as np
-import QuadraticFormsMGHyp as qf
+from QuadraticFormsMGHyp import QuadraticForm
 
-ccdf, es = qf.qfmgh(
-    np.linspace(-1.0, 3.0, 5),
+qf = QuadraticForm(
     0.0,
     np.array([1.0]),
     np.zeros((1, 1)),
@@ -23,9 +22,10 @@ ccdf, es = qf.qfmgh(
     1.0,   # chi
     1.0,   # psi
 )
+cdf, ccdf, pm, es = qf.eval(np.linspace(-1.0, 3.0, 5))
 ```
 
-`qfmgh` takes the same positional arguments as the Julia function. A scalar `x` returns two floats. A vector returns two arrays. The Julia keywords `do_spa` and `order` are absent: this package always evaluates the integral. `QuadraticForm` holds the spectral reduction when the same coefficients are evaluated on more than one grid.
+Construction diagonalizes the form. Further grids on the same object reuse that reduction, and each `eval` integrates the whole vector once.
 
 The numerical work is the C routine in this repository. The Julia package is [QuadraticFormsMGHyp.jl](https://github.com/s-broda/QuadraticFormsMGHyp.jl). The Fortran and Matlab code for the paper is in [s-broda/es4mgh](https://github.com/s-broda/es4mgh). This package is not on PyPI. The [documentation](https://s-broda.github.io/QuadraticFormsMGHyp-py/) has the model, the API, and the quadrature.
 
@@ -39,16 +39,20 @@ This builds the extension on the machine where it is installed, so a C compiler 
 
 From a checkout, `pip install .` does the same thing. `pip install ".[test]"` adds pytest. `pip install ".[docs]"` adds Sphinx.
 
+## Wheels
+
+A push to `main` builds wheels with cibuildwheel and tests each one. The set is Linux x86_64 and arm64 (manylinux and musllinux), macOS x86_64 and arm64, and Windows x86_64 and arm64, for the CPython versions cibuildwheel still builds. Python 3.8 is not included. Publishing a GitHub release uploads those wheels and the source distribution to PyPI. The Windows wheels use the same clang-cl and Microsoft linker path as a source build.
+
 ## API
 
 ```python
 import QuadraticFormsMGHyp as qf
 
 fit = qf.QuadraticForm(a0, a, A, C, mu, gam, lam, chi, psi)
-ccdf, es = fit.eval(x, threads=0)
+cdf, ccdf, pm, es = fit.eval(x, threads=0)
 
 fit = qf.QuadraticForm.from_spectral(omega, d, e, c, k, kk, lam, chi, psi)
-ccdf, es = fit.eval(x)
+cdf, ccdf, pm, es = fit.eval(x)
 ```
 
 `gam` is the skewness vector γ. `a`, `mu`, and `gam` are length-`d` vectors. `A` and `C` are `d × d` row-major matrices, either shape `(d, d)` or a flat vector of length `d * d`. In `from_spectral`, `omega`, `d`, and `e` are the spectral weights and the two coefficient vectors.

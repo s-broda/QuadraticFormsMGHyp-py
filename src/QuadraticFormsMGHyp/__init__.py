@@ -2,9 +2,10 @@
 
 The loss is ``L = a0 + a'X + X'A X``, with
 ``X = mu + W gam + sqrt(W) C Z``, ``Z`` standard normal, and
-``W ~ GIG(lam, chi, psi)``. ``qfmgh`` matches the Julia function of
-the same name. ``QuadraticForm`` keeps the spectral reduction so a
-second grid of thresholds does not repeat it.
+``W ~ GIG(lam, chi, psi)``. Construct one ``QuadraticForm`` and call
+``eval`` on each threshold grid. One call integrates once and returns
+the cdf, the survival function, the upper partial moment, and the
+expected shortfall.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ try:
 except PackageNotFoundError:
     __version__ = "0.1.0"
 
-__all__ = ["QuadraticForm", "qfmgh", "__version__"]
+__all__ = ["QuadraticForm", "__version__"]
 
 
 def _scalar(value, name):
@@ -143,7 +144,7 @@ class QuadraticForm(object):
         return self
 
     def eval(self, x, threads=0):
-        """Return the tail probability and the expected shortfall.
+        """Integrate once and return the distribution and both moments.
 
         Parameters
         ----------
@@ -158,13 +159,18 @@ class QuadraticForm(object):
 
         Returns
         -------
-        ccdf, es : ndarray
-            ``ccdf[i] = P(L > x[i])`` and ``es[i] = E[L | L > x[i]]``.
+        cdf, ccdf, pm, es : ndarray
+            ``cdf[i] = P(L <= x[i])``, ``ccdf[i] = P(L > x[i])``,
+            ``pm[i] = E[L 1_{L > x[i]}]``, and
+            ``es[i] = E[L | L > x[i]]``. The cdf and the partial
+            moment are formed from the survival function and the
+            expected shortfall of this same pass.
         """
         if self._cap is None:
             raise RuntimeError("this QuadraticForm has been closed")
         x = _as_vec(x, "x")
-        return _native.eval(self._cap, x, int(threads))
+        ccdf, es = _native.eval(self._cap, x, int(threads))
+        return 1.0 - ccdf, ccdf, es * ccdf, es
 
     def close(self):
         """Release the C object. A later ``eval`` raises ``RuntimeError``."""
@@ -187,44 +193,3 @@ class QuadraticForm(object):
             self._cap = None
         except Exception:
             pass
-
-
-def qfmgh(x, a0, a, A, C, mu, gam, lam, chi, psi, *, threads=0):
-    """Survivor ``P(L > x)`` and tail conditional mean ``E[L | L > x]``.
-
-    Parameters
-    ----------
-    x : float or array_like
-        A scalar threshold or a one-dimensional vector. A scalar
-        returns two floats. A vector returns two float64 arrays.
-    a0, lam, chi, psi : float
-        Constant term and the GIG parameters.
-    a, mu, gam : array_like
-        Length-``d`` vectors. ``gam`` is γ.
-    A, C : array_like
-        ``d × d`` matrices, row-major.
-    threads : int, optional
-        Passed through to :meth:`QuadraticForm.eval`.
-
-    Returns
-    -------
-    ccdf, es : float or ndarray
-        Tail probability and expected shortfall.
-
-    Notes
-    -----
-    The arguments match ``qfmgh`` in the Julia package. This build
-    always evaluates the integral, so the Julia keywords ``do_spa``
-    and ``order`` are not accepted. Construct a :class:`QuadraticForm`
-    when the same coefficients are evaluated on more than one grid.
-    """
-    scalar = np.ndim(x) == 0
-    values = np.atleast_1d(np.asarray(x, dtype=np.float64))
-    fit = QuadraticForm(a0, a, A, C, mu, gam, lam, chi, psi)
-    try:
-        ccdf, es = fit.eval(values, threads=threads)
-    finally:
-        fit.close()
-    if scalar:
-        return float(ccdf[0]), float(es[0])
-    return ccdf, es

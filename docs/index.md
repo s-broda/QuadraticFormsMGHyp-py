@@ -31,11 +31,11 @@ $$
 
 Special cases include the variance-gamma law ($\lambda > 0$), Student's $t$ ($\lambda = -\nu/2$, $\chi = \nu$, $\psi = 0$), the normal-inverse Gaussian ($\lambda = -1/2$), and the hyperbolic law ($\lambda = 1$).
 
-At a threshold $x$ the package returns $\mathrm{P}(L > x)$ and $\mathrm{E}[L \mid L > x]$. The algorithm is the Gil-Pelaez inversion from Broda and Zambrano, [*Biometrika* **108** (2021)](https://doi.org/10.1093/biomet/asaa067). It generalizes Imhof (1961) and Broda (2012).
+At a threshold $x$ one evaluation returns $\mathrm{P}(L \le x)$, $\mathrm{P}(L > x)$, the upper partial moment $\mathrm{E}[L 1_{L > x}]$, and the expected shortfall $\mathrm{E}[L \mid L > x]$. The algorithm is the Gil-Pelaez inversion from Broda and Zambrano, [*Biometrika* **108** (2021)](https://doi.org/10.1093/biomet/asaa067). It generalizes Imhof (1961) and Broda (2012).
 
 ## Installation
 
-The package is not on PyPI. A C compiler and Python headers are required, because the extension is compiled at install time. NumPy is installed as a dependency.
+A source install needs a C compiler and Python headers, because the extension is compiled on the machine. NumPy is installed as a dependency. Publishing a GitHub release uploads binary wheels to PyPI.
 
 ```bash
 pip install "git+https://github.com/s-broda/QuadraticFormsMGHyp-py.git"
@@ -51,14 +51,13 @@ sphinx-build -b html docs docs/_build/html
 
 ## Usage
 
-`qfmgh` takes the same positional arguments as the Julia function. A scalar threshold returns two floats. A vector returns two arrays and reuses one spectral reduction for every entry.
+Construct a {class}`QuadraticFormsMGHyp.QuadraticForm` once. Each {meth}`QuadraticFormsMGHyp.QuadraticForm.eval` integrates that grid once. {meth}`QuadraticFormsMGHyp.QuadraticForm.from_spectral` skips the reduction and takes the eigenvalues and the two coefficient vectors directly.
 
 ```python
 import numpy as np
-import QuadraticFormsMGHyp as qf
+from QuadraticFormsMGHyp import QuadraticForm
 
-ccdf, es = qf.qfmgh(
-    np.linspace(-1.0, 3.0, 5),
+qf = QuadraticForm(
     0.0,
     np.array([1.0]),
     np.zeros((1, 1)),
@@ -69,16 +68,10 @@ ccdf, es = qf.qfmgh(
     1.0,
     1.0,
 )
+cdf, ccdf, pm, es = qf.eval(np.linspace(-1.0, 3.0, 5))
 ```
 
-Hold a {class}`QuadraticFormsMGHyp.QuadraticForm` when several grids share the coefficients. {meth}`QuadraticFormsMGHyp.QuadraticForm.from_spectral` skips the reduction and takes the eigenvalues and the two coefficient vectors directly.
-
-```python
-with qf.QuadraticForm(a0, a, A, C, mu, gam, lam, chi, psi) as fit:
-    ccdf, es = fit.eval(x)
-```
-
-This package always evaluates the integral. The Julia keywords `do_spa` and `order` are not accepted.
+`cdf` is $\mathrm{P}(L \le x)$ and `ccdf` is $\mathrm{P}(L > x)$. `pm` is $\mathrm{E}[L 1_{L > x}]$ and `es` is $\mathrm{E}[L \mid L > x]$. A `with` block releases the C object.
 
 ## Citation
 

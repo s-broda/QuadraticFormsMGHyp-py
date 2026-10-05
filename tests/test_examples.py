@@ -27,7 +27,9 @@ def test_portfolio_matches_quadrature():
         problem["a0"], problem["a"], problem["A"], problem["C"],
         problem["mu"], problem["gam"], problem["lam"], problem["chi"], problem["psi"],
     )
-    ccdf, es = fit.eval(problem["x"], threads=1)
+    cdf, ccdf, pm, es = fit.eval(problem["x"], threads=1)
+    assert cdf == pytest.approx(1.0 - ccdf, abs=0.0)
+    assert pm == pytest.approx(es * ccdf, abs=0.0)
     ref_ccdf, ref_es = gil_pelaez(problem)
     ccdf_gap = float(np.max(np.abs(ccdf - ref_ccdf)))
     es_gap = float(np.max(np.abs(es - ref_es)))
@@ -40,7 +42,7 @@ def test_portfolio_matches_quadrature():
     assert body_gap < 5e-6, "max |es error| above 1%% = %g" % body_gap
     assert es_gap < 5e-4, "max |es error| = %g" % es_gap
 
-    parallel_ccdf, parallel_es = fit.eval(problem["x"], threads=0)
+    _, parallel_ccdf, _, parallel_es = fit.eval(problem["x"], threads=0)
     assert np.max(np.abs(parallel_ccdf - ccdf)) < 1e-12
     assert np.max(np.abs(parallel_es - es)) < 1e-9
 
@@ -62,7 +64,7 @@ def test_twosls_matches_quadrature():
             problem["a0"], problem["a"], problem["A"], problem["C"],
             problem["mu"], problem["gam"], problem["lam"], problem["chi"], problem["psi"],
         )
-        ccdf, es = fit.eval(problem["x"], threads=1)
+        _, ccdf, _, es = fit.eval(problem["x"], threads=1)
         ref_ccdf, ref_es = gil_pelaez(problem)
         ccdf_gap = max(ccdf_gap, float(np.max(np.abs(ccdf - ref_ccdf))))
         es_gap = max(es_gap, float(np.max(np.abs(es - ref_es))))
@@ -70,7 +72,7 @@ def test_twosls_matches_quadrature():
     assert es_gap < 1e-7, "max |es error| = %g" % es_gap
 
 
-def test_qfmgh_matches_the_class_and_a_scalar():
+def test_eval_reuses_the_object_and_close_rejects_another_call():
     problem = portfolio()
     args = (
         problem["a0"], problem["a"], problem["A"], problem["C"],
@@ -79,16 +81,9 @@ def test_qfmgh_matches_the_class_and_a_scalar():
     grid = problem["x"][:5]
     with QuadraticFormsMGHyp.QuadraticForm(*args) as fit:
         assert repr(fit) == "QuadraticForm(dimension=10)"
-        ccdf, es = fit.eval(grid, threads=1)
+        first = fit.eval(grid, threads=1)
+        second = fit.eval(grid, threads=1)
+    assert first[1] == pytest.approx(second[1], abs=0.0)
+    assert first[3] == pytest.approx(second[3], abs=1e-12)
     with pytest.raises(RuntimeError):
         fit.eval(grid[:1])
-
-    got_ccdf, got_es = QuadraticFormsMGHyp.qfmgh(grid, *args, threads=1)
-    assert got_ccdf == pytest.approx(ccdf, abs=1e-12)
-    assert got_es == pytest.approx(es, abs=1e-12)
-    one_ccdf, one_es = QuadraticFormsMGHyp.qfmgh(float(grid[0]), *args, threads=1)
-    assert isinstance(one_ccdf, float) and isinstance(one_es, float)
-    assert one_ccdf == pytest.approx(float(ccdf[0]), abs=1e-12)
-    assert one_es == pytest.approx(float(es[0]), abs=1e-12)
-    with pytest.raises(TypeError):
-        QuadraticFormsMGHyp.qfmgh(float(grid[0]), *args, do_spa=True)

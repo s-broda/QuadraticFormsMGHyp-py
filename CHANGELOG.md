@@ -2,4 +2,4 @@
 
 ## 0.1.0
 
-First Python release. The import name is `QuadraticFormsMGHyp`, matching the Julia package. `qfmgh` takes the same positional arguments as the Julia function and always evaluates the integral. Install from GitHub. The package is not on PyPI.
+First Python release. Requires Python 3.9 or newer. Construct a `QuadraticForm` and call `eval`. One call returns the cdf, the tail probability, the upper partial moment, and the expected shortfall. A GitHub release publishes wheels and a source distribution to PyPI.
