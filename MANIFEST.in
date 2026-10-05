@@ -1,0 +1,12 @@
+include es4mgh.c
+include es4mgh.h
+include src/es4mgh/_native.c
+include src/es4mgh/__init__.py
+include README.md
+include tests/test_basic.py
+prune build
+global-exclude *.o
+global-exclude *.mod
+global-exclude *.so
+global-exclude bench_c
+global-exclude bench_fort

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "es4mgh"
+version = "0.1.0"
+description = "Tail probability and expected shortfall of a quadratic form in a multivariate generalized hyperbolic vector"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{ name = "Simon Broda" }]
+dependencies = ["numpy"]
+
+[project.urls]
+Repository = "https://github.com/s-broda/es4mgh-c"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.exclude-package-data]
+es4mgh = ["*.c"]
