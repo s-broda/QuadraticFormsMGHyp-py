@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 The mapped rule doubles its node count until successive refinements agree to a relative tolerance of 1e-7, up to 4096 nodes. A long threshold list uses a Chebyshev series that grows the same way as the Julia package. `ES4_NNODE`, when set, is a fixed order in 4–8192. A half-integer order whose χ or ψ argument is exactly zero uses the gamma limit, so a skewed variance-gamma form at the origin stays finite. `chi = psi = inf` is the Gaussian limit, with the mixer fixed at 1. A low-rank Gaussian spectrum is integrated in panels because the characteristic function decays only as a power of the frequency.
 
