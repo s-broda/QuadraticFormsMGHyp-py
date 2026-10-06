@@ -36,21 +36,23 @@ static const double INV_PI = 0.31830988618379067153776752674502872;
 
 enum { KIND_GENERAL = 0, KIND_NIG = 1, KIND_HALF = 2, KIND_PSI0 = 3 };
 
-enum { NNODE_DEFAULT = 64 };
+enum { NNODE_CAP = 4096 };
 
-static int default_nnode(int kind) {
-    const char *e = getenv("ES4_NNODE");
-    if (e && e[0]) {
-        int n = atoi(e);
-        if (n < 4) n = 4;
-        if (n > 256) n = 256;
-        return n;
-    }
-    /* NIG and the fractional-order series are spectrally accurate by 32 nodes
-       on the mapped interval. The power-law (Student t) tail needs more. */
+static int kind_nnode(int kind) {
+    /* Starting order. Successive refinements double it until the relative test. */
     if (kind == KIND_NIG || kind == KIND_GENERAL) return 32;
     if (kind == KIND_HALF) return 48;
-    return NNODE_DEFAULT;
+    return 64;
+}
+
+/* A set ES4_NNODE is a fixed order, used as-is for benchmarks. */
+static int env_nnode(void) {
+    const char *e = getenv("ES4_NNODE");
+    if (!e || !e[0]) return 0;
+    int n = atoi(e);
+    if (n < 4) n = 4;
+    if (n > 8192) n = 8192;
+    return n;
 }
 
 struct es4mgh {
@@ -70,6 +72,12 @@ struct es4mgh {
     double _Complex *psi_inv;
     double _Complex *log_psi;
     double M20;
+    double D2z, E2z, DEz, ccoef, kcoef, ub;
+    double *spec; /* omega, d2, e2 packed with stride spec_n */
+    double *de;
+    int spec_n;
+    int nlo;          /* coarse order that agreed with its double; 0 if unknown */
+    int fixed_nnode;  /* ES4_NNODE, or 0 when the order adapts */
     int g_fast;
     double g_mu, g_sinmu, g_sin1, g_lgp, g_lgm, g_lgq, g_lgr;
     double g_elgp, g_elgm, g_elgq, g_elgr;
@@ -416,6 +424,118 @@ static int half_n(double nu, int *n) {
     return 0;
 }
 
+static void free_nodes(es4mgh *E) {
+    free(E->u); E->u = NULL;
+    free(E->wo); E->wo = NULL;
+    free(E->chi_base); E->chi_base = NULL;
+    free(E->psi_node); E->psi_node = NULL;
+    free(E->lrho); E->lrho = NULL;
+    free(E->a2p); E->a2p = NULL;
+    free(E->a1p); E->a1p = NULL;
+    free(E->lrp); E->lrp = NULL;
+    free(E->psi_inv); E->psi_inv = NULL;
+    free(E->log_psi); E->log_psi = NULL;
+    E->nnode = 0;
+}
+
+/* Allocate the new tables first and swap only after they are filled. */
+static int fill_nodes(es4mgh *E, int nn) {
+    if (nn < 1) return 0;
+    double *u = (double *)malloc((size_t)nn * sizeof(double));
+    double *wo = (double *)malloc((size_t)nn * sizeof(double));
+    double _Complex *chi_base = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
+    double _Complex *psi_node = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
+    double _Complex *lrho = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
+    double _Complex *a2p = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
+    double _Complex *a1p = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
+    double _Complex *lrp = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
+    double _Complex *psi_inv = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
+    double _Complex *log_psi = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
+    double *gx = (double *)malloc((size_t)nn * sizeof(double));
+    double *gw = (double *)malloc((size_t)nn * sizeof(double));
+    if (!u || !wo || !chi_base || !psi_node || !lrho || !a2p || !a1p || !lrp ||
+        !psi_inv || !log_psi || !gx || !gw) {
+        free(u); free(wo); free(chi_base); free(psi_node); free(lrho);
+        free(a2p); free(a1p); free(lrp); free(psi_inv); free(log_psi);
+        free(gx); free(gw);
+        return 0;
+    }
+    gauss_legendre(nn, gx, gw);
+    const double *omega = E->spec;
+    const double *d2 = omega ? omega + E->spec_n : NULL;
+    const double *e2 = d2 ? d2 + E->spec_n : NULL;
+    const double *de = E->de;
+    const int ne = E->ne;
+    const double ub = E->ub;
+    const double chi = E->chi;
+    const double psi = E->psi;
+    const double D2z = E->D2z, E2z = E->E2z, DEz = E->DEz;
+    const double c = E->ccoef, k = E->kcoef;
+    for (int i = 0; i < nn; ++i) {
+        double v = 0.5 * ub * (gx[i] + 1.0);
+        double wv = 0.5 * ub * gw[i];
+        double ss = v / (1.0 - v);
+        double uu = ss * ss;
+        double dudv = 2.0 * ss / ((1.0 - v) * (1.0 - v));
+        u[i] = uu;
+        wo[i] = wv * dudv / uu;
+
+        double complex s = I * uu;
+        double complex s2 = s * s;
+        double complex t1 = 0.0, t2 = 0.0, t3 = 0.0, t4 = 0.0;
+        double complex a2 = 0.0, a1 = 0.0, lr = 0.0;
+        for (int j = 0; j < ne; ++j) {
+            double complex nu = 1.0 / (1.0 - 2.0 * omega[j] * s);
+            double complex nu2 = nu * nu;
+            t1 += d2[j] * nu;
+            t2 += e2[j] * nu;
+            t3 += de[j] * nu;
+            t4 += clog(nu);
+            a2 += s * d2[j] * nu + s2 * d2[j] * omega[j] * nu2;
+            a1 += s * e2[j] * nu + s2 * e2[j] * omega[j] * nu2;
+            lr += 2.0 * s * de[j] * nu + 2.0 * s2 * de[j] * omega[j] * nu2 + omega[j] * nu;
+        }
+        t1 += D2z;
+        t2 += E2z;
+        t3 += DEz;
+        a2 += s * D2z;
+        a1 += s * E2z + k;
+        lr += 2.0 * s * DEz + c;
+        chi_base[i] = chi - s2 * t1;
+        psi_node[i] = psi - 2.0 * (k * s + 0.5 * s2 * t2);
+        lrho[i] = s * c + s2 * t3 + 0.5 * t4;
+        a2p[i] = a2;
+        a1p[i] = a1;
+        lrp[i] = lr;
+        {
+            double complex p = psi_node[i];
+            double pn = creal(p) * creal(p) + cimag(p) * cimag(p);
+            if (pn == 0.0) {
+                psi_inv[i] = 0.0;
+                log_psi[i] = 0.0;
+            } else {
+                psi_inv[i] = 1.0 / p;
+                log_psi[i] = clog(p);
+            }
+        }
+    }
+    free(gx);
+    free(gw);
+    free_nodes(E);
+    E->u = u;
+    E->wo = wo;
+    E->chi_base = chi_base;
+    E->psi_node = psi_node;
+    E->lrho = lrho;
+    E->a2p = a2p;
+    E->a1p = a1p;
+    E->lrp = lrp;
+    E->psi_inv = psi_inv;
+    E->log_psi = log_psi;
+    E->nnode = nn;
+    return 1;
+}
+
 static es4mgh *build_from_spectral(
     const double *omega_all, const double *d_all, const double *e_all, int ne_all,
     double c, double k, double kk, double lam, double chi, double psi) {
@@ -508,87 +628,24 @@ static es4mgh *build_from_spectral(
         E->psi_c1 = exp(c1 - c0);
         E->psi_c2 = exp(c2 - c0);
     }
-    E->nnode = default_nnode(E->kind);
-
-    int nn = E->nnode;
-    E->u = (double *)malloc((size_t)nn * sizeof(double));
-    E->wo = (double *)malloc((size_t)nn * sizeof(double));
-    E->chi_base = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    E->psi_node = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    E->lrho = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    E->a2p = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    E->a1p = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    E->lrp = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    E->psi_inv = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    E->log_psi = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    if (!E->u || !E->wo || !E->chi_base || !E->psi_node || !E->lrho || !E->a2p || !E->a1p || !E->lrp ||
-        !E->psi_inv || !E->log_psi) {
-        es4mgh_free(E);
-        free(omega);
-        free(de);
-        return NULL;
-    }
-
-    double ub = integration_ub(omega_all, ne_all);
-    double *gx = (double *)malloc((size_t)nn * sizeof(double));
-    double *gw = (double *)malloc((size_t)nn * sizeof(double));
-    gauss_legendre(nn, gx, gw);
-
-    for (int i = 0; i < nn; ++i) {
-        double v = 0.5 * ub * (gx[i] + 1.0);
-        double wv = 0.5 * ub * gw[i];
-        double ss = v / (1.0 - v);
-        double u = ss * ss;
-        double dudv = 2.0 * ss / ((1.0 - v) * (1.0 - v));
-        E->u[i] = u;
-        E->wo[i] = wv * dudv / u;
-
-        double complex s = I * u;
-        double complex s2 = s * s;
-        double complex t1 = 0.0, t2 = 0.0, t3 = 0.0, t4 = 0.0;
-        double complex a2p = 0.0, a1p = 0.0, lrp = 0.0;
-        for (int j = 0; j < ne; ++j) {
-            double complex nu = 1.0 / (1.0 - 2.0 * omega[j] * s);
-            double complex nu2 = nu * nu;
-            t1 += d2[j] * nu;
-            t2 += e2[j] * nu;
-            t3 += de[j] * nu;
-            t4 += clog(nu);
-            a2p += s * d2[j] * nu + s2 * d2[j] * omega[j] * nu2;
-            a1p += s * e2[j] * nu + s2 * e2[j] * omega[j] * nu2;
-            lrp += 2.0 * s * de[j] * nu + 2.0 * s2 * de[j] * omega[j] * nu2 + omega[j] * nu;
-        }
-        /* Exact-zero eigenvalues: nu = 1. */
-        t1 += D2z;
-        t2 += E2z;
-        t3 += DEz;
-        a2p += s * D2z;
-        a1p += s * E2z;
-        lrp += 2.0 * s * DEz;
-        a1p += k;
-        lrp += c;
-        E->chi_base[i] = chi - s2 * t1;
-        E->psi_node[i] = psi - 2.0 * (k * s + 0.5 * s2 * t2);
-        E->lrho[i] = s * c + s2 * t3 + 0.5 * t4;
-        E->a2p[i] = a2p;
-        E->a1p[i] = a1p;
-        E->lrp[i] = lrp;
-        {
-            double complex p = E->psi_node[i];
-            double pn = creal(p) * creal(p) + cimag(p) * cimag(p);
-            if (pn == 0.0) {
-                E->psi_inv[i] = 0.0;
-                E->log_psi[i] = 0.0;
-            } else {
-                E->psi_inv[i] = 1.0 / p;
-                E->log_psi[i] = clog(p);
-            }
+    E->D2z = D2z;
+    E->E2z = E2z;
+    E->DEz = DEz;
+    E->ccoef = c;
+    E->kcoef = k;
+    E->spec = omega;
+    E->de = de;
+    E->spec_n = ne_all;
+    E->ub = integration_ub(omega_all, ne_all);
+    E->nlo = 0;
+    E->fixed_nnode = env_nnode();
+    {
+        int nn = E->fixed_nnode > 0 ? E->fixed_nnode : kind_nnode(E->kind);
+        if (!fill_nodes(E, nn)) {
+            es4mgh_free(E);
+            return NULL;
         }
     }
-    free(gx);
-    free(gw);
-    free(omega);
-    free(de);
 
     /* Partial-moment anchor M2(0). Independent of q. */
     {
@@ -720,6 +777,7 @@ void es4mgh_free(es4mgh *E) {
     free(E->chi_base); free(E->psi_node); free(E->lrho);
     free(E->a2p); free(E->a1p); free(E->lrp);
     free(E->psi_inv); free(E->log_psi);
+    free(E->spec); free(E->de);
     free(E);
 }
 
@@ -965,6 +1023,23 @@ static void eval_point(const es4mgh *E, double q, double *ccdf, double *es) {
         for (int i = 0; i < nn; ++i) {
             double complex chi = E->chi_base[i] + I * (2.0 * E->u[i] * q);
             double complex psi = E->psi_node[i];
+            /* chi = 0 or psi = 0 is the gamma limit. clog of that argument is NaN. */
+            if ((creal(chi) == 0.0 && cimag(chi) == 0.0) ||
+                (creal(psi) == 0.0 && cimag(psi) == 0.0)) {
+                double complex base = -LK2 + E->lrho[i];
+                double complex lm0 = lklam(lam, chi, psi) + base;
+                Ic += E->wo[i] * imag_exp(lm0);
+                if (do_es) {
+                    double complex lm1 = lklam(lam + 1.0, chi, psi) + base;
+                    double acc = imag_exp_mul(lm0, E->a2p[i]) + imag_exp_mul(lm1, E->lrp[i]);
+                    if (E->need_a1) {
+                        double complex lm2 = lklam(lam + 2.0, chi, psi) + base;
+                        acc += imag_exp_mul(lm2, E->a1p[i]);
+                    }
+                    Ip += E->wo[i] * acc;
+                }
+                continue;
+            }
             double complex prod = chi * psi;
             if (creal(prod) < 0.0 && fabs(cimag(prod)) <= 1e-14 * (1.0 + fabs(creal(prod))))
                 continue;
@@ -1449,11 +1524,36 @@ static int fast_batch(const es4mgh *E, int n, const double *x,
     return 0;
 }
 
-static int cheb_order(const es4mgh *E) {
-    /* Smallest grid whose interpolant sits on the quadrature floor. */
-    if (E->kind == KIND_GENERAL) return 6;
-    if (E->kind == KIND_HALF) return 20;
-    return 16;
+static int cheb_start(int kind) {
+    /* First degree tried. The normal-inverse-Gaussian tail has settled by 20. */
+    if (kind == KIND_NIG) return 20;
+    return 48;
+}
+
+static int pair_settled(double a, double b) {
+    int fa = isfinite(a);
+    int fb = isfinite(b);
+    if (fa && fb) {
+        double m = fabs(a) > fabs(b) ? fabs(a) : fabs(b);
+        return fabs(a - b) <= 1e-7 * m;
+    }
+    if (!fa && !fb) {
+        if (isnan(a) && isnan(b)) return 1;
+        if (isinf(a) && isinf(b) && signbit(a) == signbit(b)) return 1;
+    }
+    return 0;
+}
+
+static int vecs_settled(int n, const double *a, const double *b) {
+    if (!a && !b) return 1;
+    if (!a || !b) return 0;
+    for (int i = 0; i < n; ++i)
+        if (!pair_settled(a[i], b[i])) return 0;
+    return 1;
+}
+
+static void copy_out(int n, double *dst, const double *src) {
+    if (dst && src) memcpy(dst, src, (size_t)n * sizeof(double));
 }
 
 static void cheb_coeffs(int m, const double *yq, double *a) {
@@ -1477,43 +1577,29 @@ static double clenshaw(int m, const double *a, double t) {
 
 static void interp_on(int m, double mid, double half, const double *yq,
                       int n, const double *x, double *y) {
-    double a[32];
+    double a[96];
+    if (m < 1 || m > 96) return;
     cheb_coeffs(m, yq, a);
     double invh = half == 0.0 ? 0.0 : 1.0 / half;
     for (int i = 0; i < n; ++i)
         y[i] = clenshaw(m, a, (x[i] - mid) * invh);
 }
 
-void es4mgh_eval(const es4mgh *E, int n, const double *x,
-                 double *ccdf, double *es, int nthreads) {
-    if (!E || n <= 0) return;
-    /* The tail curve is analytic in the threshold. A short Chebyshev
-       grid matches direct quadrature to the node tolerance. */
-    if (n > 24) {
-        double xmin = x[0], xmax = x[0];
-        for (int i = 1; i < n; ++i) {
-            if (x[i] < xmin) xmin = x[i];
-            if (x[i] > xmax) xmax = x[i];
+static int series_settled(int m, const double *ac, const double *ae, const double *esq) {
+    if (ac && fabs(ac[m - 1]) > 1e-9) return 0;
+    if (ae && esq) {
+        double scale = 1.0;
+        for (int i = 0; i < m; ++i) {
+            double av = fabs(esq[i]);
+            if (av > scale) scale = av;
         }
-        if (xmax - xmin <= 1e-14 * (1.0 + fabs(xmax))) {
-            double cc, ee;
-            es4mgh_eval(E, 1, x, ccdf ? &cc : NULL, es ? &ee : NULL, 1);
-            for (int i = 0; i < n; ++i) {
-                if (ccdf) ccdf[i] = cc;
-                if (es) es[i] = ee;
-            }
-            return;
-        }
-        const int m = cheb_order(E);
-        double xq[32], ccq[32], esq[32];
-        double mid = 0.5 * (xmin + xmax), half = 0.5 * (xmax - xmin);
-        for (int j = 0; j < m; ++j)
-            xq[j] = mid + half * cos(PI * (j + 0.5) / (double)m);
-        es4mgh_eval(E, m, xq, ccdf ? ccq : NULL, es ? esq : NULL, nthreads);
-        if (ccdf) interp_on(m, mid, half, ccq, n, x, ccdf);
-        if (es) interp_on(m, mid, half, esq, n, x, es);
-        return;
+        if (fabs(ae[m - 1]) > 1e-9 * scale) return 0;
     }
+    return 1;
+}
+
+static void eval_prepared(const es4mgh *E, int n, const double *x,
+                          double *ccdf, double *es, int nthreads) {
     if (fast_batch(E, n, x, ccdf, es)) return;
     if (nthreads <= 0) nthreads = host_threads();
     if (nthreads > n) nthreads = n;
@@ -1549,4 +1635,120 @@ void es4mgh_eval(const es4mgh *E, int n, const double *x,
     eval_chunk(&c);
     (void)nthreads;
 #endif
+}
+
+/* Compare nn nodes with the next refinement. Remember the coarse order that
+   agreed, and write the finer values. At 4096, write the finest table. */
+static void eval_adaptive(es4mgh *E, int n, const double *x,
+                          double *ccdf, double *es, int nthreads) {
+    if (E->fixed_nnode > 0) {
+        if (E->nnode != E->fixed_nnode) fill_nodes(E, E->fixed_nnode);
+        eval_prepared(E, n, x, ccdf, es, nthreads);
+        return;
+    }
+    int nn = E->nlo > 0 ? E->nlo : kind_nnode(E->kind);
+    if (nn > NNODE_CAP) nn = NNODE_CAP;
+    if (nn < 1) nn = 1;
+    double *cc_c = ccdf ? (double *)malloc((size_t)n * sizeof(double)) : NULL;
+    double *es_c = es ? (double *)malloc((size_t)n * sizeof(double)) : NULL;
+    double *cc_f = ccdf ? (double *)malloc((size_t)n * sizeof(double)) : NULL;
+    double *es_f = es ? (double *)malloc((size_t)n * sizeof(double)) : NULL;
+    if ((ccdf && (!cc_c || !cc_f)) || (es && (!es_c || !es_f))) {
+        free(cc_c); free(es_c); free(cc_f); free(es_f);
+        eval_prepared(E, n, x, ccdf, es, nthreads);
+        return;
+    }
+    if (!fill_nodes(E, nn)) {
+        free(cc_c); free(es_c); free(cc_f); free(es_f);
+        eval_prepared(E, n, x, ccdf, es, nthreads);
+        return;
+    }
+    eval_prepared(E, n, x, cc_c, es_c, nthreads);
+    if (nn >= NNODE_CAP) {
+        copy_out(n, ccdf, cc_c);
+        copy_out(n, es, es_c);
+    }
+    while (nn < NNODE_CAP) {
+        int n2 = nn * 2;
+        if (n2 > NNODE_CAP) n2 = NNODE_CAP;
+        if (!fill_nodes(E, n2)) {
+            copy_out(n, ccdf, cc_c);
+            copy_out(n, es, es_c);
+            break;
+        }
+        eval_prepared(E, n, x, cc_f, es_f, nthreads);
+        if (vecs_settled(n, cc_c, cc_f) && vecs_settled(n, es_c, es_f)) {
+            E->nlo = nn;
+            copy_out(n, ccdf, cc_f);
+            copy_out(n, es, es_f);
+            break;
+        }
+        if (n2 == NNODE_CAP) {
+            copy_out(n, ccdf, cc_f);
+            copy_out(n, es, es_f);
+            break;
+        }
+        {
+            double *tc = cc_c; cc_c = cc_f; cc_f = tc;
+            double *te = es_c; es_c = es_f; es_f = te;
+        }
+        nn = n2;
+    }
+    free(cc_c); free(es_c); free(cc_f); free(es_f);
+}
+
+void es4mgh_eval(es4mgh *E, int n, const double *x,
+                 double *ccdf, double *es, int nthreads) {
+    if (!E || n <= 0) return;
+    if (n <= 24) {
+        eval_adaptive(E, n, x, ccdf, es, nthreads);
+        return;
+    }
+    /* A smooth tail is analytic in the threshold. Certify the node count on
+       the Chebyshev abscissae, then interpolate. A sharp bend is integrated
+       directly. The direct call is eval_adaptive, not es4mgh_eval. */
+    double xmin = x[0], xmax = x[0];
+    for (int i = 1; i < n; ++i) {
+        if (x[i] < xmin) xmin = x[i];
+        if (x[i] > xmax) xmax = x[i];
+    }
+    if (xmax - xmin <= 1e-14 * (1.0 + fabs(xmax))) {
+        double cc = 0.0, ee = 0.0;
+        eval_adaptive(E, 1, x, ccdf ? &cc : NULL, es ? &ee : NULL, 1);
+        for (int i = 0; i < n; ++i) {
+            if (ccdf) ccdf[i] = cc;
+            if (es) es[i] = ee;
+        }
+        return;
+    }
+    double mid = 0.5 * (xmin + xmax), half = 0.5 * (xmax - xmin);
+    int m = cheb_start(E->kind);
+    if (m > n) m = n;
+    while (1) {
+        double xq[96], ccq[96], esq[96], ac[96], ae[96];
+        for (int j = 0; j < m; ++j)
+            xq[j] = mid + half * cos(PI * (j + 0.5) / (double)m);
+        eval_adaptive(E, m, xq, ccdf ? ccq : NULL, es ? esq : NULL, nthreads);
+        if (ccdf) cheb_coeffs(m, ccq, ac);
+        if (es) cheb_coeffs(m, esq, ae);
+        if (series_settled(m, ccdf ? ac : NULL, es ? ae : NULL, es ? esq : NULL)) {
+            if (ccdf) interp_on(m, mid, half, ccq, n, x, ccdf);
+            if (es) interp_on(m, mid, half, esq, n, x, es);
+            return;
+        }
+        if (m >= n || m >= 96) {
+            eval_adaptive(E, n, x, ccdf, es, nthreads);
+            return;
+        }
+        int step = m / 2;
+        if (step < 8) step = 8;
+        int nxt = m + step;
+        if (nxt > n) nxt = n;
+        if (nxt > 96) nxt = 96;
+        if (nxt <= m) {
+            eval_adaptive(E, n, x, ccdf, es, nthreads);
+            return;
+        }
+        m = nxt;
+    }
 }

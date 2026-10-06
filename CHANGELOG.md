@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+The mapped rule doubles its node count until successive refinements agree to a relative tolerance of 1e-7, up to 4096 nodes. A long threshold list uses a Chebyshev series that grows the same way as the Julia package. `ES4_NNODE`, when set, is a fixed order in 4–8192. A half-integer order whose χ or ψ argument is exactly zero uses the gamma limit, so a skewed variance-gamma form at the origin stays finite.
+
 ## 0.2.0
 
 No change to the numerical results. The README carries a Zenodo badge. Publishing this GitHub release archives the package on Zenodo.

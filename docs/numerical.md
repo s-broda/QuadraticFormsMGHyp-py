@@ -2,18 +2,18 @@
 
 Each threshold is a mapped Gauss–Legendre rule on the Gil-Pelaez integral. The upper limit in the mapped coordinate is chosen from the same truncation used by the Fortran code, then clamped into $(10^{-6},\, 0.999999)$.
 
-The default node count depends on the law:
+The node count starts from a default and doubles until the survival and the expected shortfall each change by less than a relative $10^{-7}$, or until 4096 nodes. The value returned is the finer of the two orders that agreed. The next call on the same object starts at the coarser of those two and checks the refinement again.
 
-| Law | Nodes | Chebyshev nodes, when there are more than 24 thresholds |
-| --- | --- | --- |
-| Normal-inverse Gaussian, $\lambda = -1/2$ and $\chi, \psi > 0$ | 32 | 16 |
-| General GH, fractional order with a convergent series | 32 | 6 |
-| Half-integer order | 48 | 20 |
-| $\psi = 0$ with no skewness contribution that moves $\psi$ | 64 | 16 |
+| Law | Starting nodes |
+| --- | --- |
+| Normal-inverse Gaussian, $\lambda = -1/2$ and $\chi, \psi > 0$ | 32 |
+| General GH | 32 |
+| Half-integer order | 48 |
+| $\psi = 0$ with no skewness contribution that moves $\psi$ | 64 |
 
-`ES4_NNODE` replaces that count. Values outside 4–256 are clamped. `ES4_SLOW=1` skips the closed forms and the series and evaluates each threshold on its own.
+`ES4_NNODE` replaces that count and turns the refinement off. Values outside 4–8192 are clamped. `ES4_SLOW=1` skips the closed forms and the series and evaluates each threshold on its own.
 
-A vector longer than 24 distinct thresholds is replaced by the Chebyshev grid, integrated there, and written back with Clenshaw's algorithm. Identical thresholds, up to $10^{-14}$ relative to the right endpoint, are evaluated once and copied.
+A vector longer than 24 distinct thresholds is replaced by a Chebyshev grid, integrated there, and written back with Clenshaw's algorithm. The degree starts at 20 for the normal-inverse Gaussian and at 48 otherwise, and grows until the last coefficient is at most $10^{-9}$, up to 96. The node count is certified on those abscissae. Identical thresholds, up to $10^{-14}$ relative to the right endpoint, are evaluated once and copied.
 
 ## Threads
 

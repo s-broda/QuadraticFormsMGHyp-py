@@ -70,7 +70,7 @@ cdf, ccdf, pm, es = fit.eval(x)
 
 ## Accuracy
 
-Thresholds use a mapped Gauss–Legendre rule: 32 nodes for NIG and the general series, 48 for a half-integer order, and 64 for a ψ = 0 law. More than 24 thresholds are evaluated on a Chebyshev grid of 6, 16, or 20 nodes and interpolated.
+Thresholds use a mapped Gauss–Legendre rule. The order starts at 32, 48, or 64 nodes by law and doubles until successive refinements agree to a relative tolerance of 1e-7, up to 4096 nodes. More than 24 thresholds are evaluated on a Chebyshev grid whose degree grows until the last coefficient is small, then interpolated.
 
 ## Tests
 

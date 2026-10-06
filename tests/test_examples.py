@@ -94,6 +94,18 @@ def test_zero_skew_drops_infinite_second_moment():
     assert np.all(np.isfinite(grid_es))
 
 
+def test_concentrated_nig_uses_the_refined_rule():
+    # chi = psi = 400. A fixed 32-node rule is about 0.016 high on the
+    # survival and about 0.2 low on the shortfall.
+    z = np.zeros(2)
+    fit = QuadraticFormsMGHyp.QuadraticForm(
+        0.0, z, np.diag([1.0, 0.5]), np.eye(2), z, z, -0.5, 400.0, 400.0,
+    )
+    _, ccdf, _, es = fit.eval(2.0, threads=1)
+    assert ccdf == pytest.approx(0.2572066792989306, abs=1e-9)
+    assert es == pytest.approx(3.6180484695108244, abs=1e-8)
+
+
 def test_eval_reuses_the_object_and_close_rejects_another_call():
     problem = portfolio()
     args = (

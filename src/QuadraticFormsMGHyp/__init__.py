@@ -153,8 +153,8 @@ class QuadraticForm(object):
         threads : int, optional
             Worker count on the scalar path. ``threads <= 0`` uses
             one worker per logical CPU. NIG, ψ = 0, and the general-GH series evaluate
-            the vector on the calling thread. More than 24 thresholds
-            are reduced to a Chebyshev grid first.
+            the vector on the calling thread. The node count doubles until successive
+            refinements agree. More than 24 thresholds are reduced to a Chebyshev grid first.
 
         Returns
         -------

@@ -12,8 +12,13 @@
      ccdf[i] = P(L > x[i])
      es[i]   = E[L | L > x[i]]
    Either pointer may be NULL. Matrices are row-major.
-   nthreads <= 0 uses the logical CPU count. Vectors longer than 24 thresholds are
-   evaluated on a short Chebyshev grid and interpolated. */
+   nthreads <= 0 uses the logical CPU count. The node count starts from the law's
+   default and doubles until successive refinements agree to relative 1e-7, or
+   until 4096 nodes. ES4_NNODE, when set, is a fixed order in 4..8192.
+   Vectors longer than 24 thresholds are evaluated on a Chebyshev grid whose
+   degree grows until the last coefficient is small, then interpolated.
+   es4mgh_eval updates the stored rule and is not safe to call concurrently
+   on the same object. */
 
 typedef struct es4mgh es4mgh;
 
@@ -31,7 +36,7 @@ es4mgh *es4mgh_create_spectral(
     double c, double k, double kk,
     double lam, double chi, double psi);
 
-void es4mgh_eval(const es4mgh *E, int n, const double *x,
+void es4mgh_eval(es4mgh *E, int n, const double *x,
                  double *ccdf, double *es, int nthreads);
 
 void es4mgh_free(es4mgh *E);
