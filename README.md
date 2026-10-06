@@ -70,7 +70,7 @@ cdf, ccdf, pm, es = fit.eval(x)
 
 ## Accuracy
 
-Thresholds use a mapped Gauss–Legendre rule. The order starts at 32, 48, or 64 nodes by law and doubles until successive refinements agree to a relative tolerance of 1e-7, up to 4096 nodes. More than 24 thresholds are evaluated on a Chebyshev grid whose degree grows until the last coefficient is small, then interpolated.
+Thresholds use a mapped Gauss–Legendre rule. The order starts at 32, 48, or 64 nodes by law and doubles until successive refinements agree to a relative tolerance of 1e-7, up to 4096 nodes. More than 24 thresholds are evaluated on a Chebyshev grid whose degree grows until the last coefficient is small, then interpolated. `chi = psi = inf` evaluates the Gaussian limit, with the mixing variable fixed at 1. A low-rank Gaussian spectrum is integrated in panels; a spectrum that decays quickly stays on the mapped rule.
 
 ## Tests
 

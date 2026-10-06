@@ -15,6 +15,9 @@
    nthreads <= 0 uses the logical CPU count. The node count starts from the law's
    default and doubles until successive refinements agree to relative 1e-7, or
    until 4096 nodes. ES4_NNODE, when set, is a fixed order in 4..8192.
+   chi = psi = +INFINITY is the Gaussian limit: the mixer is the constant 1.
+   A low-rank Gaussian spectrum is integrated in panels; a fast-decaying one
+   stays on the mapped rule.
    Vectors longer than 24 thresholds are evaluated on a Chebyshev grid whose
    degree grows until the last coefficient is small, then interpolated.
    es4mgh_eval updates the stored rule and is not safe to call concurrently

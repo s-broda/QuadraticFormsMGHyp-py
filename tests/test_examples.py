@@ -106,6 +106,74 @@ def test_concentrated_nig_uses_the_refined_rule():
     assert es == pytest.approx(3.6180484695108244, abs=1e-8)
 
 
+def test_gaussian_limit_matches_the_normal_and_chi_square():
+    # chi = psi = inf fixes the mixer at 1. lambda is unused.
+    import math
+
+    def pchi(x):
+        return math.erfc(math.sqrt(x / 2.0))
+
+    def eschi(x):
+        return 1.0 + math.sqrt(x) * math.exp(-0.5 * x) * math.sqrt(2.0 / math.pi) / pchi(x)
+
+    def pnorm(x):
+        return 0.5 * math.erfc(x / math.sqrt(2.0))
+
+    def esnorm(x):
+        return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi) / pnorm(x)
+
+    for lam in (-0.5, 3.0):
+        for x in (0.5, 1.0, 4.0):
+            fit = QuadraticFormsMGHyp.QuadraticForm(
+                0.0, np.zeros(1), np.ones((1, 1)), np.ones((1, 1)),
+                np.zeros(1), np.zeros(1), lam, np.inf, np.inf,
+            )
+            _, ccdf, _, es = fit.eval(x, threads=1)
+            assert ccdf == pytest.approx(pchi(x), abs=1e-9)
+            assert es == pytest.approx(eschi(x), abs=1e-8)
+    for x in (-1.0, 0.0, 1.5):
+        fit = QuadraticFormsMGHyp.QuadraticForm(
+            0.0, np.ones(1), np.zeros((1, 1)), np.ones((1, 1)),
+            np.zeros(1), np.zeros(1), -0.5, np.inf, np.inf,
+        )
+        _, ccdf, _, es = fit.eval(x, threads=1)
+        assert ccdf == pytest.approx(pnorm(x), abs=1e-9)
+        assert es == pytest.approx(esnorm(x), abs=1e-8)
+    xs = np.linspace(0.25, 6.0, 40)
+    fit = QuadraticFormsMGHyp.QuadraticForm(
+        0.0, np.zeros(1), np.ones((1, 1)), np.ones((1, 1)),
+        np.zeros(1), np.zeros(1), 0.0, np.inf, np.inf,
+    )
+    _, ccdf, _, es = fit.eval(xs, threads=1)
+    assert np.max(np.abs(ccdf - np.array([pchi(x) for x in xs]))) < 1e-8
+    assert np.max(np.abs(es - np.array([eschi(x) for x in xs]))) < 1e-7
+    _, ccdf, _, es = fit.eval(10.0, threads=1)
+    assert ccdf == pytest.approx(pchi(10.0), rel=1e-7)
+    assert es == pytest.approx(eschi(10.0), rel=1e-7)
+    _, ccdf, _, es = fit.eval(0.0, threads=1)
+    assert ccdf == pytest.approx(1.0, abs=1e-8)
+    assert es == pytest.approx(1.0, abs=1e-8)
+    eye = np.eye(2)
+    z2 = np.zeros(2)
+    for x in (1.0, 4.0):
+        fit2 = QuadraticFormsMGHyp.QuadraticForm(
+            0.0, z2, eye, eye, z2, z2, 0.0, np.inf, np.inf,
+        )
+        _, ccdf, _, es = fit2.eval(x, threads=1)
+        assert ccdf == pytest.approx(math.exp(-0.5 * x), rel=1e-8)
+        assert es == pytest.approx(x + 2.0, rel=1e-8)
+    fitc = QuadraticFormsMGHyp.QuadraticForm(
+        3.0, np.zeros(1), np.zeros((1, 1)), np.ones((1, 1)),
+        np.zeros(1), np.zeros(1), 0.0, np.inf, np.inf,
+    )
+    _, ccdf, _, es = fitc.eval(-0.2, threads=1)
+    assert ccdf == pytest.approx(1.0, abs=0.0)
+    assert es == pytest.approx(3.0, abs=0.0)
+    _, ccdf, _, es = fitc.eval(3.0, threads=1)
+    assert ccdf == pytest.approx(0.0, abs=0.0)
+    assert np.isnan(np.asarray(es)).all()
+
+
 def test_eval_reuses_the_object_and_close_rejects_another_call():
     problem = portfolio()
     args = (

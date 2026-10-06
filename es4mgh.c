@@ -34,13 +34,13 @@ static const double EU = 0.57721566490153286060651209008240243;
 static const double LOG2 = 0.69314718055994530941723212145817657;
 static const double INV_PI = 0.31830988618379067153776752674502872;
 
-enum { KIND_GENERAL = 0, KIND_NIG = 1, KIND_HALF = 2, KIND_PSI0 = 3 };
+enum { KIND_GENERAL = 0, KIND_NIG = 1, KIND_HALF = 2, KIND_PSI0 = 3, KIND_GAUSS = 4 };
 
 enum { NNODE_CAP = 4096 };
 
 static int kind_nnode(int kind) {
     /* Starting order. Successive refinements double it until the relative test. */
-    if (kind == KIND_NIG || kind == KIND_GENERAL) return 32;
+    if (kind == KIND_NIG || kind == KIND_GENERAL || kind == KIND_GAUSS) return 32;
     if (kind == KIND_HALF) return 48;
     return 64;
 }
@@ -501,6 +501,18 @@ static int fill_nodes(es4mgh *E, int nn) {
         a2 += s * D2z;
         a1 += s * E2z + k;
         lr += 2.0 * s * DEz + c;
+        if (E->kind == KIND_GAUSS) {
+            /* log rho + alpha1 + alpha2. Evaluation subtracts I*u*q. */
+            chi_base[i] = 0.0;
+            psi_node[i] = 0.0;
+            lrho[i] = s * c + s2 * t3 + 0.5 * t4 + k * s + 0.5 * s2 * (t1 + t2);
+            a2p[i] = a2;
+            a1p[i] = a1;
+            lrp[i] = lr;
+            psi_inv[i] = 0.0;
+            log_psi[i] = 0.0;
+            continue;
+        }
         chi_base[i] = chi - s2 * t1;
         psi_node[i] = psi - 2.0 * (k * s + 0.5 * s2 * t2);
         lrho[i] = s * c + s2 * t3 + 0.5 * t4;
@@ -577,14 +589,23 @@ static es4mgh *build_from_spectral(
     E->psi = psi;
     E->need_a1 = (fabs(k) > 0.0 || E2z > 0.0);
     for (int i = 0; i < ne; ++i) if (e2[i] != 0.0 || de[i] != 0.0) E->need_a1 = 1;
-    E->LK2 = lklam_real(lam, chi, psi);
 
+    /* chi = psi = +Inf is the degenerate mixer W = 1, for any lambda. */
+    int gaussian = isinf(chi) && isinf(psi) && chi > 0.0 && psi > 0.0;
     int hn = 0;
-    if (fabs(lam + 0.5) < 1e-12 && chi > 0.0 && psi > 0.0) E->kind = KIND_NIG;
-    else if (psi == 0.0 && fabs(k) == 0.0 && E2z == 0.0 && !E->need_a1) E->kind = KIND_PSI0;
-    else if (psi == 0.0 && fabs(k) == 0.0 && E2z == 0.0) E->kind = KIND_PSI0;
-    else if (half_n(lam, &hn)) E->kind = KIND_HALF;
-    else E->kind = KIND_GENERAL;
+    if (gaussian) {
+        E->kind = KIND_GAUSS;
+        E->LK2 = 0.0;
+    } else {
+        E->LK2 = lklam_real(lam, chi, psi);
+    }
+    if (!gaussian) {
+        if (fabs(lam + 0.5) < 1e-12 && chi > 0.0 && psi > 0.0) E->kind = KIND_NIG;
+        else if (psi == 0.0 && fabs(k) == 0.0 && E2z == 0.0 && !E->need_a1) E->kind = KIND_PSI0;
+        else if (psi == 0.0 && fabs(k) == 0.0 && E2z == 0.0) E->kind = KIND_PSI0;
+        else if (half_n(lam, &hn)) E->kind = KIND_HALF;
+        else E->kind = KIND_GENERAL;
+    }
 
     /* psi==0 and e==0,k==0 => psi argument stays 0 even if need_a1 is false.
        If e is not zero, psi argument moves and we cannot use the power branch. */
@@ -649,17 +670,22 @@ static es4mgh *build_from_spectral(
 
     /* Partial-moment anchor M2(0). Independent of q. */
     {
-        double complex lm1 = lklam(lam + 1.0, chi, psi) - E->LK2;
         double sum_om = 0.0;
         for (int i = 0; i < ne_all; ++i) sum_om += omega_all[i];
-        /* k*E[W^2] is the zero random variable when k is 0. For psi = 0 and
-           lambda = -2, E[W^2] is infinite and cexp(lm2)*0 is a NaN. */
-        double complex skew = 0.0;
-        if (k != 0.0) {
-            double complex lm2 = lklam(lam + 2.0, chi, psi) - E->LK2;
-            skew = cexp(lm2) * k;
+        if (gaussian) {
+            /* E[W] = E[W^2] = 1. */
+            E->M20 = k + c + sum_om;
+        } else {
+            double complex lm1 = lklam(lam + 1.0, chi, psi) - E->LK2;
+            /* k*E[W^2] is the zero random variable when k is 0. For psi = 0 and
+               lambda = -2, E[W^2] is infinite and cexp(lm2)*0 is a NaN. */
+            double complex skew = 0.0;
+            if (k != 0.0) {
+                double complex lm2 = lklam(lam + 2.0, chi, psi) - E->LK2;
+                skew = cexp(lm2) * k;
+            }
+            E->M20 = creal(skew + cexp(lm1) * (c + sum_om));
         }
-        E->M20 = creal(skew + cexp(lm1) * (c + sum_om));
     }
     return E;
 }
@@ -979,7 +1005,18 @@ static void eval_point(const es4mgh *E, double q, double *ccdf, double *es) {
     double Ic = 0.0, Ip = 0.0;
     const int do_es = es != NULL;
 
-    if (E->kind == KIND_NIG) {
+    if (E->kind == KIND_GAUSS) {
+        for (int i = 0; i < nn; ++i) {
+            double complex lm = E->lrho[i] - I * (E->u[i] * q);
+            Ic += E->wo[i] * imag_exp(lm);
+            if (do_es) {
+                double acc = imag_exp_mul(lm, E->a2p[i]) + imag_exp_mul(lm, E->lrp[i]);
+                if (E->need_a1)
+                    acc += imag_exp_mul(lm, E->a1p[i]);
+                Ip += E->wo[i] * acc;
+            }
+        }
+    } else if (E->kind == KIND_NIG) {
         for (int i = 0; i < nn; ++i) {
             double complex chi = E->chi_base[i] + I * (2.0 * E->u[i] * q);
             double complex psi = E->psi_node[i];
@@ -1526,7 +1563,7 @@ static int fast_batch(const es4mgh *E, int n, const double *x,
 
 static int cheb_start(int kind) {
     /* First degree tried. The normal-inverse-Gaussian tail has settled by 20. */
-    if (kind == KIND_NIG) return 20;
+    if (kind == KIND_NIG || kind == KIND_GAUSS) return 20;
     return 48;
 }
 
@@ -1637,10 +1674,206 @@ static void eval_prepared(const es4mgh *E, int n, const double *x,
 #endif
 }
 
+/* Log characteristic function and partial-moment factor at real frequency t. */
+static void gauss_phase(const es4mgh *E, double t, double complex *lm0, double complex *beta) {
+    double complex s = I * t;
+    double complex s2 = s * s;
+    double complex t1 = 0.0, t2 = 0.0, t3 = 0.0, t4 = 0.0;
+    double complex a2 = 0.0, a1 = 0.0, lr = 0.0;
+    const double *omega = E->spec;
+    const double *d2 = omega ? omega + E->spec_n : NULL;
+    const double *e2 = d2 ? d2 + E->spec_n : NULL;
+    const double *de = E->de;
+    for (int j = 0; j < E->ne; ++j) {
+        double complex nu = 1.0 / (1.0 - 2.0 * omega[j] * s);
+        double complex nu2 = nu * nu;
+        t1 += d2[j] * nu;
+        t2 += e2[j] * nu;
+        t3 += de[j] * nu;
+        t4 += clog(nu);
+        a2 += s * d2[j] * nu + s2 * d2[j] * omega[j] * nu2;
+        a1 += s * e2[j] * nu + s2 * e2[j] * omega[j] * nu2;
+        lr += 2.0 * s * de[j] * nu + 2.0 * s2 * de[j] * omega[j] * nu2 + omega[j] * nu;
+    }
+    t1 += E->D2z;
+    t2 += E->E2z;
+    t3 += E->DEz;
+    a2 += s * E->D2z;
+    a1 += s * E->E2z + E->kcoef;
+    lr += 2.0 * s * E->DEz + E->ccoef;
+    *lm0 = s * E->ccoef + s2 * t3 + 0.5 * t4 + E->kcoef * s + 0.5 * s2 * (t1 + t2);
+    *beta = a2 + lr;
+    if (E->need_a1) *beta += a1;
+}
+
+static void gauss_tail_pair(const es4mgh *E, double Ic, double Ip, double *ccdf, double *es) {
+    double cval = 0.5 + INV_PI * Ic;
+    if (ccdf) *ccdf = cval;
+    if (es) *es = (0.5 * E->M20 + INV_PI * Ip) / cval + E->kk;
+}
+
+static void gauss_ibp(const es4mgh *E, double q, double T, double *tc, double *tp) {
+    double delta = 1e-7 * (1.0 + T);
+    double cap = 0.05 * T;
+    if (delta > cap) delta = cap;
+    double complex hm, h0, hp, pm, p0, pp;
+    double ts[3] = { T - delta, T, T + delta };
+    double complex hs[3], ps[3];
+    for (int i = 0; i < 3; ++i) {
+        double complex lm0, beta;
+        gauss_phase(E, ts[i], &lm0, &beta);
+        double re = creal(lm0);
+        if (re < -700.0 || re > 700.0) {
+            hs[i] = 0.0;
+            ps[i] = 0.0;
+        } else {
+            double complex e = cexp(lm0);
+            hs[i] = e / ts[i];
+            ps[i] = e * beta / ts[i];
+        }
+    }
+    hm = hs[0]; h0 = hs[1]; hp = hs[2];
+    pm = ps[0]; p0 = ps[1]; pp = ps[2];
+    double complex h1 = (hp - hm) / (2.0 * delta);
+    double complex p1 = (pp - pm) / (2.0 * delta);
+    double complex h2 = (hp - 2.0 * h0 + hm) / (delta * delta);
+    double complex p2 = (pp - 2.0 * p0 + pm) / (delta * delta);
+    double complex iq = I * q;
+    double complex iq2 = iq * iq;
+    double complex osc = cexp(-I * q * T);
+    *tc = cimag(osc * (h0 / iq + h1 / iq2 + h2 / (iq2 * iq)));
+    *tp = cimag(osc * (p0 / iq + p1 / iq2 + p2 / (iq2 * iq)));
+}
+
+static void gauss_panel_nodes(double *gx, double *gw) {
+    static double x[12], w[12];
+    static int ready = 0;
+    if (!ready) {
+        gauss_legendre(12, x, w);
+        ready = 1;
+    }
+    memcpy(gx, x, 12 * sizeof(double));
+    memcpy(gw, w, 12 * sizeof(double));
+}
+
+static void gauss_panel_osc(const es4mgh *E, double q, double *ccdf, double *es) {
+    double gx[12], gw[12];
+    gauss_panel_nodes(gx, gw);
+    double aq = fabs(q);
+    double T = 800.0 / aq;
+    double wosc = PI / (2.0 * aq);
+    double a = 0.0, Ic = 0.0, Ip = 0.0;
+    int do_es = es != NULL;
+    while (a < T) {
+        double ws = 0.25 * a;
+        if (ws < 1.0) ws = 1.0;
+        double w = wosc < ws ? wosc : ws;
+        if (w > T - a) w = T - a;
+        if (!(w > 0.0)) break;
+        double mid = a + 0.5 * w;
+        double half = 0.5 * w;
+        for (int i = 0; i < 12; ++i) {
+            double t = mid + half * gx[i];
+            double wt = half * gw[i];
+            double complex lm0, beta;
+            gauss_phase(E, t, &lm0, &beta);
+            double complex lm = lm0 - I * (t * q);
+            Ic += wt * imag_exp(lm) / t;
+            if (do_es) Ip += wt * imag_exp_mul(lm, beta) / t;
+        }
+        a += w;
+    }
+    double tc = 0.0, tp = 0.0;
+    gauss_ibp(E, q, T, &tc, &tp);
+    gauss_tail_pair(E, Ic + tc, Ip + tp, ccdf, es);
+}
+
+static void gauss_panel_zero(const es4mgh *E, double *ccdf, double *es) {
+    double gx[12], gw[12];
+    gauss_panel_nodes(gx, gw);
+    double Ic = 0.0, Ip = 0.0;
+    int do_es = es != NULL;
+    double a = 0.0;
+    while (a < 1.0) {
+        double w = 0.05;
+        if (w > 1.0 - a) w = 1.0 - a;
+        if (!(w > 0.0)) break;
+        double mid = a + 0.5 * w, half = 0.5 * w;
+        for (int i = 0; i < 12; ++i) {
+            double t = mid + half * gx[i];
+            double wt = half * gw[i];
+            double complex lm0, beta;
+            gauss_phase(E, t, &lm0, &beta);
+            Ic += wt * imag_exp(lm0) / t;
+            if (do_es) Ip += wt * imag_exp_mul(lm0, beta) / t;
+        }
+        a += w;
+    }
+    a = 0.0;
+    while (a < 80.0) {
+        double w = 0.5;
+        if (w > 80.0 - a) w = 80.0 - a;
+        if (!(w > 0.0)) break;
+        double mid = a + 0.5 * w, half = 0.5 * w;
+        for (int i = 0; i < 12; ++i) {
+            double z = mid + half * gx[i];
+            double wt = half * gw[i];
+            double t = exp(z);
+            double complex lm0, beta;
+            gauss_phase(E, t, &lm0, &beta);
+            Ic += wt * imag_exp(lm0);
+            if (do_es) Ip += wt * imag_exp_mul(lm0, beta);
+        }
+        a += w;
+    }
+    gauss_tail_pair(E, Ic, Ip, ccdf, es);
+}
+
+static double gauss_kernel_var(const es4mgh *E) {
+    return E->D2z + E->E2z + 2.0 * E->DEz;
+}
+
+static int gauss_is_constant(const es4mgh *E) {
+    return E->kind == KIND_GAUSS && E->ne == 0 && gauss_kernel_var(E) <= 0.0;
+}
+
+static int gauss_needs_panel(const es4mgh *E) {
+    if (E->kind != KIND_GAUSS || E->fixed_nnode > 0) return 0;
+    if (gauss_is_constant(E)) return 0;
+    return gauss_kernel_var(E) <= 0.0 && E->ub > 0.91;
+}
+
+static void eval_gauss_panel(const es4mgh *E, int n, const double *x, double *ccdf, double *es) {
+    for (int i = 0; i < n; ++i) {
+        double q = x[i] - E->kk;
+        double *cc = ccdf ? ccdf + i : NULL;
+        double *ee = es ? es + i : NULL;
+        if (fabs(q) < 1e-12) gauss_panel_zero(E, cc, ee);
+        else gauss_panel_osc(E, q, cc, ee);
+    }
+}
+
+static void eval_gauss_constant(const es4mgh *E, int n, const double *x, double *ccdf, double *es) {
+    for (int i = 0; i < n; ++i) {
+        double q = x[i] - E->kk;
+        if (q < 0.0) {
+            if (ccdf) ccdf[i] = 1.0;
+            if (es) es[i] = E->kk;
+        } else {
+            if (ccdf) ccdf[i] = 0.0;
+            if (es) es[i] = NAN;
+        }
+    }
+}
+
 /* Compare nn nodes with the next refinement. Remember the coarse order that
    agreed, and write the finer values. At 4096, write the finest table. */
 static void eval_adaptive(es4mgh *E, int n, const double *x,
                           double *ccdf, double *es, int nthreads) {
+    if (gauss_needs_panel(E)) {
+        eval_gauss_panel(E, n, x, ccdf, es);
+        return;
+    }
     if (E->fixed_nnode > 0) {
         if (E->nnode != E->fixed_nnode) fill_nodes(E, E->fixed_nnode);
         eval_prepared(E, n, x, ccdf, es, nthreads);
@@ -1700,6 +1933,10 @@ static void eval_adaptive(es4mgh *E, int n, const double *x,
 void es4mgh_eval(es4mgh *E, int n, const double *x,
                  double *ccdf, double *es, int nthreads) {
     if (!E || n <= 0) return;
+    if (gauss_is_constant(E)) {
+        eval_gauss_constant(E, n, x, ccdf, es);
+        return;
+    }
     if (n <= 24) {
         eval_adaptive(E, n, x, ccdf, es, nthreads);
         return;

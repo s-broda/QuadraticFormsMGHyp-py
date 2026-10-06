@@ -10,10 +10,14 @@ The node count starts from a default and doubles until the survival and the expe
 | General GH | 32 |
 | Half-integer order | 48 |
 | $\psi = 0$ with no skewness contribution that moves $\psi$ | 64 |
+| Gaussian limit, fast decay | 32 |
+| Gaussian limit, low rank | panels |
+
+$\chi = \psi = +\infty$ fixes the mixing variable at 1, for any $\lambda$. The vector is then Gaussian with mean $\mu+\gamma$ and covariance $CC^\top$. A finite pair, however large, stays on the generalized-hyperbolic path. In the limit, the characteristic function of a low-rank quadratic form decays only as a power of the frequency, so the integral is taken over panels of at most a quarter period and closed with a three-term integration by parts. A spectrum whose mapped truncation bound is at most 0.91, and any form with a Gaussian factor from a zero eigenvalue, stays on the mapped rule.
 
 `ES4_NNODE` replaces that count and turns the refinement off. Values outside 4–8192 are clamped. `ES4_SLOW=1` skips the closed forms and the series and evaluates each threshold on its own.
 
-A vector longer than 24 distinct thresholds is replaced by a Chebyshev grid, integrated there, and written back with Clenshaw's algorithm. The degree starts at 20 for the normal-inverse Gaussian and at 48 otherwise, and grows until the last coefficient is at most $10^{-9}$, up to 96. The node count is certified on those abscissae. Identical thresholds, up to $10^{-14}$ relative to the right endpoint, are evaluated once and copied.
+A vector longer than 24 distinct thresholds is replaced by a Chebyshev grid, integrated there, and written back with Clenshaw's algorithm. The degree starts at 20 for the normal-inverse Gaussian and the Gaussian limit, and at 48 otherwise, and grows until the last coefficient is at most $10^{-9}$, up to 96. The node count is certified on those abscissae. Identical thresholds, up to $10^{-14}$ relative to the right endpoint, are evaluated once and copied.
 
 ## Threads
 

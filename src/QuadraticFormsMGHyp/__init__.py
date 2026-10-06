@@ -71,6 +71,9 @@ class QuadraticForm(object):
     ----------
     a0, lam, chi, psi : float
         Constant term and the GIG parameters λ, χ, and ψ.
+        ``chi = psi = inf`` is the Gaussian limit: the mixer is the
+        constant 1, for any ``lam``. A low-rank Gaussian spectrum is
+        integrated in panels.
     a, mu, gam : array_like
         Length-``d`` vectors.
     A, C : array_like
@@ -153,7 +156,9 @@ class QuadraticForm(object):
         threads : int, optional
             Worker count on the scalar path. ``threads <= 0`` uses
             one worker per logical CPU. NIG, ψ = 0, and the general-GH series evaluate
-            the vector on the calling thread. The node count doubles until successive
+            the vector on the calling thread. The Gaussian limit does too.
+            A low-rank Gaussian spectrum is integrated in panels.
+            The node count doubles until successive
             refinements agree. More than 24 thresholds are reduced to a Chebyshev grid first.
 
         Returns
