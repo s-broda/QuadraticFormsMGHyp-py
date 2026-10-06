@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.0
+
+No change to the numerical results. The README carries a Zenodo badge. Publishing this GitHub release archives the package on Zenodo.
+
 ## 0.1.2
 
 When the coefficient of W squared is exactly zero, the partial-moment anchor omits that term before the exponential. For psi = 0 and lambda = -2 the second moment of W is infinite, and the product was a NaN shortfall. The survival probability was already finite.

@@ -3,7 +3,7 @@
 project = "QuadraticFormsMGHyp"
 author = "Simon Broda"
 copyright = "2026, Simon Broda"
-release = "0.1.2"
+release = "0.2.0"
 
 extensions = [
     "myst_parser",

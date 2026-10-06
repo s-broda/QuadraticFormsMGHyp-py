@@ -2,6 +2,7 @@
 
 [![tests](https://github.com/s-broda/QuadraticFormsMGHyp-py/actions/workflows/ci.yml/badge.svg)](https://github.com/s-broda/QuadraticFormsMGHyp-py/actions/workflows/ci.yml)
 [![docs](https://img.shields.io/badge/docs-pages-blue)](https://s-broda.github.io/QuadraticFormsMGHyp-py/)
+[![DOI](https://zenodo.org/badge/1405937226.svg)](https://zenodo.org/badge/latestdoi/1405937226)
 
 Tail probability and expected shortfall of a quadratic form in a multivariate generalized hyperbolic vector.
 

@@ -11,7 +11,7 @@ authors:
 repository-code: https://github.com/s-broda/QuadraticFormsMGHyp-py
 url: https://s-broda.github.io/QuadraticFormsMGHyp-py/
 license: MIT
-version: 0.1.2
+version: 0.2.0
 preferred-citation:
   type: article
   title: >-
