@@ -73,6 +73,27 @@ def test_twosls_matches_quadrature():
     assert es_gap < 5e-7, "max |es error| = %g" % es_gap
 
 
+def test_zero_skew_drops_infinite_second_moment():
+    # lambda = -2, psi = 0, gamma = 0, so k = gamma' A gamma is exactly zero.
+    # E[W^2] is infinite. E[L] = a0 + E[W] * trace(A) = 0.1 + 2 * 1.3 = 2.7.
+    a0 = 0.1
+    a = np.array([0.2, -0.1, 0.0, 0.3])
+    A = np.diag([0.4, 0.0, 0.2, 0.7])
+    z = np.zeros(4)
+    fit = QuadraticFormsMGHyp.QuadraticForm(
+        a0, a, A, np.eye(4), z, z, -2.0, 4.0, 0.0,
+    )
+    cdf, ccdf, pm, es = fit.eval(-1.0, threads=1)
+    assert cdf == pytest.approx(1.0 - ccdf, abs=0.0)
+    assert ccdf == pytest.approx(0.9999998269559728, abs=1e-12)
+    assert es == pytest.approx(2.700000681379396, abs=1e-9)
+    assert np.isfinite(es)
+    assert pm == pytest.approx(es * ccdf, abs=0.0)
+    _, grid_ccdf, _, grid_es = fit.eval(np.linspace(-1.0, 8.0, 50), threads=1)
+    assert np.all(np.isfinite(grid_ccdf))
+    assert np.all(np.isfinite(grid_es))
+
+
 def test_eval_reuses_the_object_and_close_rejects_another_call():
     problem = portfolio()
     args = (

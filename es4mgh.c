@@ -593,11 +593,16 @@ static es4mgh *build_from_spectral(
     /* Partial-moment anchor M2(0). Independent of q. */
     {
         double complex lm1 = lklam(lam + 1.0, chi, psi) - E->LK2;
-        double complex lm2 = lklam(lam + 2.0, chi, psi) - E->LK2;
         double sum_om = 0.0;
         for (int i = 0; i < ne_all; ++i) sum_om += omega_all[i];
-        double complex M20 = cexp(lm2) * k + cexp(lm1) * (c + sum_om);
-        E->M20 = creal(M20);
+        /* k*E[W^2] is the zero random variable when k is 0. For psi = 0 and
+           lambda = -2, E[W^2] is infinite and cexp(lm2)*0 is a NaN. */
+        double complex skew = 0.0;
+        if (k != 0.0) {
+            double complex lm2 = lklam(lam + 2.0, chi, psi) - E->LK2;
+            skew = cexp(lm2) * k;
+        }
+        E->M20 = creal(skew + cexp(lm1) * (c + sum_om));
     }
     return E;
 }

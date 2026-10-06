@@ -19,7 +19,7 @@ from . import _native
 try:
     __version__ = version("QuadraticFormsMGHyp")
 except PackageNotFoundError:
-    __version__ = "0.1.1"
+    __version__ = "0.1.2"
 
 __all__ = ["QuadraticForm", "__version__"]
 

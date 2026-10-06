@@ -26,3 +26,5 @@ On the scalar path, macOS splits the threshold index into contiguous chunks and 
 The test suite compares the portfolio and two-stage least squares examples from the Julia package with an independent 96-node quadrature of the same integral. On the portfolio the tail probability stays within about $10^{-8}$. Expected shortfall stays within about $10^{-6}$ where that probability is above 1%, and within about $5 \times 10^{-4}$ at the far end of the grid. The two-stage least squares cases stay within about $10^{-8}$ on the probability and about $5 \times 10^{-7}$ on the expected shortfall.
 
 GitHub Actions runs those tests on Linux, macOS, and Windows, on Python 3.9 and 3.12.
+
+The partial-moment anchor is $\mathrm{E}[L] - k_k = k\,\mathrm{E}[W^2] + \mathrm{E}[W](c + \mathrm{tr}(C'AC))$, with $k = \gamma'A\gamma$. When $k$ is exactly zero that first product is omitted before the exponential. For $\psi = 0$ and $\lambda = -2$, $\mathrm{E}[W^2]$ is infinite, and forming the product in floating point yields a NaN shortfall even though $k W^2$ is the zero random variable. The survival probability does not use the anchor.
