@@ -9,6 +9,7 @@ eigensolver when the build found one, and Jacobi otherwise.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -229,6 +230,28 @@ def test_reused_object_swaps_back_to_the_same_values():
     _assert_pair(again_c, again_e, first_c, first_e, 1e-12, "reuse")
 
 
+def _elf_needed(path):
+    """Dynamic dependencies, without loading the extension.
+
+    musl's ldd exits when the Python symbols are still undefined. Those
+    symbols are resolved at import. readelf only prints the NEEDED list.
+    """
+    readers = []
+    for tool in ("readelf", "llvm-readelf"):
+        found = shutil.which(tool)
+        if found:
+            readers.append([found, "-d", path])
+    found = shutil.which("objdump")
+    if found:
+        readers.append([found, "-p", path])
+    for args in readers:
+        try:
+            return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL).lower()
+        except (OSError, subprocess.CalledProcessError):
+            continue
+    return None
+
+
 def test_linux_build_links_openmp_and_openblas():
     # The numerical tests pass with Jacobi alone. This one checks that a
     # Linux machine which has the libraries, including CI, actually linked them.
@@ -236,17 +259,21 @@ def test_linux_build_links_openmp_and_openblas():
         pytest.skip("OpenMP and OpenBLAS are the Linux build")
     import QuadraticFormsMGHyp._native as native
 
-    ldd = subprocess.check_output(["ldd", native.__file__], text=True)
-    on_ci = os.environ.get("GITHUB_ACTIONS") == "true"
+    needed = _elf_needed(native.__file__)
+    on_ci = os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CIBUILDWHEEL") == "1"
+    if needed is None:
+        if on_ci:
+            raise AssertionError("no ELF reader on PATH")
+        pytest.skip("no ELF reader on PATH")
     blas = subprocess.call(
         ["pkg-config", "--exists", "openblas"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     if on_ci or blas == 0:
-        assert "openblas" in ldd.lower(), ldd
-    if on_ci or "libgomp" in ldd or "libomp" in ldd:
-        assert "libgomp" in ldd or "libomp" in ldd, ldd
+        assert "openblas" in needed, needed
+    if on_ci or "libgomp" in needed or "libomp" in needed:
+        assert "libgomp" in needed or "libomp" in needed, needed
 
 
 def test_gaussian_panels_match_across_thread_counts():
