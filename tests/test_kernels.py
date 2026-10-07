@@ -97,8 +97,12 @@ def _eval_slow(args, x):
         )
         if ran.returncode != 0:
             raise AssertionError(ran.stderr or ran.stdout)
-        got = np.load(out)
-        return got["ccdf"].copy(), got["es"].copy()
+        # Close the archive before the temporary directory is removed.
+        # Windows keeps the file locked until NpzFile is closed.
+        with np.load(out) as got:
+            ccdf = got["ccdf"].copy()
+            es = got["es"].copy()
+    return ccdf, es
 
 
 def _assert_pair(got_ccdf, got_es, ref_ccdf, ref_es, rel, label):
@@ -223,6 +227,26 @@ def test_reused_object_swaps_back_to_the_same_values():
     fit.eval(np.linspace(-1.0, 8.0, 48), threads=1)
     _, again_c, _, again_e = fit.eval(short, threads=1)
     _assert_pair(again_c, again_e, first_c, first_e, 1e-12, "reuse")
+
+
+def test_linux_build_links_openmp_and_openblas():
+    # The numerical tests pass with Jacobi alone. This one checks that a
+    # Linux machine which has the libraries, including CI, actually linked them.
+    if not sys.platform.startswith("linux"):
+        pytest.skip("OpenMP and OpenBLAS are the Linux build")
+    import QuadraticFormsMGHyp._native as native
+
+    ldd = subprocess.check_output(["ldd", native.__file__], text=True)
+    on_ci = os.environ.get("GITHUB_ACTIONS") == "true"
+    blas = subprocess.call(
+        ["pkg-config", "--exists", "openblas"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if on_ci or blas == 0:
+        assert "openblas" in ldd.lower(), ldd
+    if on_ci or "libgomp" in ldd or "libomp" in ldd:
+        assert "libgomp" in ldd or "libomp" in ldd, ldd
 
 
 def test_gaussian_panels_match_across_thread_counts():
