@@ -11,12 +11,17 @@
 #include "es4_complex.h"
 #else
 #include <complex.h>
+#include <stdatomic.h>
 #include <unistd.h>
 #endif
 #if defined(__APPLE__)
 #define ACCELERATE_NEW_LAPACK
 #include <Accelerate/Accelerate.h>
 #include <sys/sysctl.h>
+#elif defined(ES4_HAVE_CBLAS)
+#include <cblas.h>
+void dsyev_(char *jobz, char *uplo, int *n, double *a, int *lda,
+            double *w, double *work, int *lwork, int *info);
 #endif
 
 #ifdef _OPENMP
@@ -37,6 +42,23 @@ static const double INV_PI = 0.31830988618379067153776752674502872;
 enum { KIND_GENERAL = 0, KIND_NIG = 1, KIND_HALF = 2, KIND_PSI0 = 3, KIND_GAUSS = 4 };
 
 enum { NNODE_CAP = 4096 };
+
+/* One filled quadrature order. The mapped tables depend only on the
+   spectrum and the order, so an object keeps the previous order as well
+   and swaps it back instead of rebuilding. */
+typedef struct {
+    int n;
+    double *u;
+    double *wo;
+    double _Complex *chi_base;
+    double _Complex *psi_node;
+    double _Complex *lrho;
+    double _Complex *a2p;
+    double _Complex *a1p;
+    double _Complex *lrp;
+    double _Complex *psi_inv;
+    double _Complex *log_psi;
+} nodeset;
 
 static int kind_nnode(int kind) {
     /* Starting order. Successive refinements double it until the relative test. */
@@ -83,6 +105,7 @@ struct es4mgh {
     double g_elgp, g_elgm, g_elgq, g_elgr;
     double g_ip[29], g_im[29], g_iq[29], g_ir[29];
     double psi_c1, psi_c2; /* exp(c1-c0), exp(c2-c0) for the psi=0 moment */
+    nodeset spare;         /* the other filled order; n == 0 if empty */
 };
 
 /* ---------------- modified Bessel K, real order, complex argument ---------------- */
@@ -289,6 +312,57 @@ static void gauss_legendre(int n, double *x, double *w) {
     }
 }
 
+/* Gauss–Legendre nodes depend only on the order. ES4_NNODE stops at 8192,
+   and the adaptive rule stops at 4096, so one immortal table per order is
+   enough. A release store publishes the buffer after it is filled. */
+enum { GL_CACHE_MAX = 8192 };
+
+#if defined(_WIN32)
+/* clang-cl's C11 atomics depend on which LLVM resource dir the build
+   picked up. An interlocked pointer publish is the same release store. */
+static double *gl_slots[GL_CACHE_MAX + 1];
+
+static double *gl_load(int n) {
+    return (double *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&gl_slots[n], NULL, NULL);
+}
+
+static double *gl_publish(int n, double *fresh) {
+    return (double *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&gl_slots[n], fresh, NULL);
+}
+#else
+static _Atomic(double *) gl_slots[GL_CACHE_MAX + 1];
+
+static double *gl_load(int n) {
+    return atomic_load_explicit(&gl_slots[n], memory_order_acquire);
+}
+
+static double *gl_publish(int n, double *fresh) {
+    double *expected = NULL;
+    if (atomic_compare_exchange_strong_explicit(
+            &gl_slots[n], &expected, fresh,
+            memory_order_release, memory_order_acquire))
+        return NULL;
+    return expected;
+}
+#endif
+
+static const double *gl_table(int n) {
+    if (n < 1 || n > GL_CACHE_MAX) return NULL;
+    double *got = gl_load(n);
+    if (got) return got;
+    double *fresh = (double *)malloc((size_t)n * 2u * sizeof(double));
+    if (!fresh) return NULL;
+    gauss_legendre(n, fresh, fresh + n);
+    double *prev = gl_publish(n, fresh);
+    if (prev) {
+        free(fresh);
+        return prev;
+    }
+    return fresh;
+}
+
 static double integration_ub(const double *omega, int ne) {
     double *o = (double *)malloc((size_t)ne * sizeof(double));
     if (!o) return 0.5;
@@ -378,8 +452,9 @@ static void jacobi(int n, double *A, double *eval, double *V) {
 
 /* Columns of V are eigenvectors, row-major. A is row-major symmetric. */
 static void eigen_symmetric(int n, double *A, double *eval, double *V) {
-#if defined(__APPLE__)
-    /* Jacobi is faster for the small matrices. BLAS pays off from n=24. */
+#if defined(__APPLE__) || defined(ES4_HAVE_CBLAS)
+    /* Jacobi is faster for the small matrices. BLAS pays off from n=24.
+       Apple uses Accelerate. A Linux build that found OpenBLAS uses that. */
     if (n >= 24) {
     double *Ac = (double *)malloc((size_t)n * (size_t)n * sizeof(double));
     if (Ac) {
@@ -424,23 +499,84 @@ static int half_n(double nu, int *n) {
     return 0;
 }
 
-static void free_nodes(es4mgh *E) {
-    free(E->u); E->u = NULL;
-    free(E->wo); E->wo = NULL;
-    free(E->chi_base); E->chi_base = NULL;
-    free(E->psi_node); E->psi_node = NULL;
-    free(E->lrho); E->lrho = NULL;
-    free(E->a2p); E->a2p = NULL;
-    free(E->a1p); E->a1p = NULL;
-    free(E->lrp); E->lrp = NULL;
-    free(E->psi_inv); E->psi_inv = NULL;
-    free(E->log_psi); E->log_psi = NULL;
-    E->nnode = 0;
+static void free_set(nodeset *s) {
+    if (!s) return;
+    free(s->u);
+    free(s->wo);
+    free(s->chi_base);
+    free(s->psi_node);
+    free(s->lrho);
+    free(s->a2p);
+    free(s->a1p);
+    free(s->lrp);
+    free(s->psi_inv);
+    free(s->log_psi);
+    s->n = 0;
+    s->u = NULL;
+    s->wo = NULL;
+    s->chi_base = NULL;
+    s->psi_node = NULL;
+    s->lrho = NULL;
+    s->a2p = NULL;
+    s->a1p = NULL;
+    s->lrp = NULL;
+    s->psi_inv = NULL;
+    s->log_psi = NULL;
 }
 
-/* Allocate the new tables first and swap only after they are filled. */
+static nodeset take_current(es4mgh *E) {
+    nodeset s;
+    s.n = E->nnode;
+    s.u = E->u;
+    s.wo = E->wo;
+    s.chi_base = E->chi_base;
+    s.psi_node = E->psi_node;
+    s.lrho = E->lrho;
+    s.a2p = E->a2p;
+    s.a1p = E->a1p;
+    s.lrp = E->lrp;
+    s.psi_inv = E->psi_inv;
+    s.log_psi = E->log_psi;
+    E->nnode = 0;
+    E->u = NULL;
+    E->wo = NULL;
+    E->chi_base = NULL;
+    E->psi_node = NULL;
+    E->lrho = NULL;
+    E->a2p = NULL;
+    E->a1p = NULL;
+    E->lrp = NULL;
+    E->psi_inv = NULL;
+    E->log_psi = NULL;
+    return s;
+}
+
+static void install_set(es4mgh *E, nodeset s) {
+    E->nnode = s.n;
+    E->u = s.u;
+    E->wo = s.wo;
+    E->chi_base = s.chi_base;
+    E->psi_node = s.psi_node;
+    E->lrho = s.lrho;
+    E->a2p = s.a2p;
+    E->a1p = s.a1p;
+    E->lrp = s.lrp;
+    E->psi_inv = s.psi_inv;
+    E->log_psi = s.log_psi;
+}
+
+/* Allocate the new tables first and swap only after they are filled.
+   A repeat of either stored order is a pointer swap: the nodes and the
+   spectral sums do not change between evaluations. */
 static int fill_nodes(es4mgh *E, int nn) {
     if (nn < 1) return 0;
+    if (E->nnode == nn && E->u) return 1;
+    if (E->spare.n == nn && E->spare.u) {
+        nodeset cur = take_current(E);
+        install_set(E, E->spare);
+        E->spare = cur;
+        return 1;
+    }
     double *u = (double *)malloc((size_t)nn * sizeof(double));
     double *wo = (double *)malloc((size_t)nn * sizeof(double));
     double _Complex *chi_base = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
@@ -451,16 +587,26 @@ static int fill_nodes(es4mgh *E, int nn) {
     double _Complex *lrp = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
     double _Complex *psi_inv = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
     double _Complex *log_psi = (double _Complex *)malloc((size_t)nn * sizeof(double _Complex));
-    double *gx = (double *)malloc((size_t)nn * sizeof(double));
-    double *gw = (double *)malloc((size_t)nn * sizeof(double));
+    const double *tab = gl_table(nn);
+    double *owned = NULL;
+    const double *gx;
+    const double *gw;
+    if (tab) {
+        gx = tab;
+        gw = tab + nn;
+    } else {
+        owned = (double *)malloc((size_t)nn * 2u * sizeof(double));
+        if (owned) gauss_legendre(nn, owned, owned + nn);
+        gx = owned;
+        gw = owned ? owned + nn : NULL;
+    }
     if (!u || !wo || !chi_base || !psi_node || !lrho || !a2p || !a1p || !lrp ||
         !psi_inv || !log_psi || !gx || !gw) {
         free(u); free(wo); free(chi_base); free(psi_node); free(lrho);
         free(a2p); free(a1p); free(lrp); free(psi_inv); free(log_psi);
-        free(gx); free(gw);
+        free(owned);
         return 0;
     }
-    gauss_legendre(nn, gx, gw);
     const double *omega = E->spec;
     const double *d2 = omega ? omega + E->spec_n : NULL;
     const double *e2 = d2 ? d2 + E->spec_n : NULL;
@@ -531,20 +677,24 @@ static int fill_nodes(es4mgh *E, int nn) {
             }
         }
     }
-    free(gx);
-    free(gw);
-    free_nodes(E);
-    E->u = u;
-    E->wo = wo;
-    E->chi_base = chi_base;
-    E->psi_node = psi_node;
-    E->lrho = lrho;
-    E->a2p = a2p;
-    E->a1p = a1p;
-    E->lrp = lrp;
-    E->psi_inv = psi_inv;
-    E->log_psi = log_psi;
-    E->nnode = nn;
+    free(owned);
+    free_set(&E->spare);
+    E->spare = take_current(E);
+    {
+        nodeset built;
+        built.n = nn;
+        built.u = u;
+        built.wo = wo;
+        built.chi_base = chi_base;
+        built.psi_node = psi_node;
+        built.lrho = lrho;
+        built.a2p = a2p;
+        built.a1p = a1p;
+        built.lrp = lrp;
+        built.psi_inv = psi_inv;
+        built.log_psi = log_psi;
+        install_set(E, built);
+    }
     return 1;
 }
 
@@ -728,7 +878,7 @@ es4mgh *es4mgh_create(
         free(muA); free(gA); free(CP); free(dvec); free(evec);
         return NULL;
     }
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(ES4_HAVE_CBLAS)
     cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                 d, d, d, 1.0, C, d, As, d, 0.0, TAs, d);
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
@@ -799,6 +949,8 @@ es4mgh *es4mgh_create(
 
 void es4mgh_free(es4mgh *E) {
     if (!E) return;
+    /* spare holds the other order. It never aliases the active pointers. */
+    free_set(&E->spare);
     free(E->u); free(E->wo);
     free(E->chi_base); free(E->psi_node); free(E->lrho);
     free(E->a2p); free(E->a1p); free(E->lrp);
@@ -1234,7 +1386,20 @@ typedef struct {
     int i0, i1;
 } Chunk;
 
+static int half_many(const es4mgh *E, int nq, const double *x,
+                     double *ccdf, double *es);
+static int use_slow(void);
+
 static void eval_chunk(const Chunk *c) {
+    /* Half-integer orders share one batched kernel per chunk, so the
+       worker split still applies and the transcendentals can vectorize.
+       ES4_SLOW keeps the scalar integrand. */
+    if (c->E->kind == KIND_HALF && !use_slow() && c->i1 > c->i0) {
+        const double *x = c->x + c->i0;
+        double *cc = c->ccdf ? c->ccdf + c->i0 : NULL;
+        double *ee = c->es ? c->es + c->i0 : NULL;
+        if (half_many(c->E, c->i1 - c->i0, x, cc, ee)) return;
+    }
     for (int i = c->i0; i < c->i1; ++i) {
         double q = c->x[i] - c->kk;
         double *cc = c->ccdf ? c->ccdf + i : NULL;
@@ -1291,6 +1456,12 @@ static void write_tail(const es4mgh *E, double Ic, double Ip, int do_es,
     if (ccdf) *ccdf = cval;
     if (do_es) *es = (0.5 * E->M20 + INV_PI * Ip) / cval + E->kk;
 }
+
+#if defined(__APPLE__)
+static void batch_clog(const double complex *z, double complex *out, int n);
+static void batch_cexp(const double complex *z, double complex *out, int n);
+static void batch_csqrt(const double complex *z, double complex *out, int n);
+#endif
 
 /* Fractional-order nodes for many thresholds. Returns 0 if a node leaves
    the series region, in which case the caller uses the scalar kernel. */
@@ -1375,6 +1546,19 @@ static int gfast_many(const es4mgh *E, int nq, const double *x,
                         y[t], z0, z0, z0, Spp, Smm, Sqq, Srr);
             Sp[t] = Spp[0]; Sm[t] = Smm[0]; Sq[t] = Sqq[0]; Sr[t] = Srr[0];
         }
+#if defined(__APPLE__)
+        for (int t = 0; t < N; ++t) Lc[t] = 0.5 * zc[t];
+        batch_clog(Lc, Lc, N);
+        batch_clog(chi, Wc, N);
+        for (int t = 0; t < N; ++t) {
+            int i = t % nn;
+            double complex lrat = Wc[t] - E->log_psi[i];
+            ph[t] = LOG2 + 0.5 * lam * lrat + (-E->LK2 + E->lrho[i]);
+        }
+        for (int t = 0; t < N; ++t) Wc[t] = mu * Lc[t];
+        batch_cexp(Wc, Wc, N);
+        batch_cexp(ph, Pc, N);
+#else
         for (int t = 0; t < N; ++t) Lc[t] = clog(0.5 * zc[t]);
         for (int t = 0; t < N; ++t) {
             int i = t % nn;
@@ -1383,6 +1567,7 @@ static int gfast_many(const es4mgh *E, int nq, const double *x,
         }
         for (int t = 0; t < N; ++t) Wc[t] = cexp(mu * Lc[t]);
         for (int t = 0; t < N; ++t) Pc[t] = cexp(ph[t]);
+#endif
         for (int qi = 0; qi < nq; ++qi) {
             double Ic = 0.0, Ip = 0.0;
             for (int i = 0; i < nn; ++i) {
@@ -1423,6 +1608,117 @@ static int gfast_many(const es4mgh *E, int nq, const double *x,
     return ok;
 }
 
+#if defined(__APPLE__)
+/* Accelerate vForce for the batched complex log, exp, and square root.
+   The leaf never asks for more than FAST_MAX entries. Scratch is
+   thread-local and reused. The modulus is mx*sqrt(1+(mn/mx)^2), which
+   matches hypot to a couple of ulps on the values this integral sees. */
+enum { VF_CHUNK = 1024 };
+
+static _Thread_local double vf_re[VF_CHUNK] __attribute__((aligned(64)));
+static _Thread_local double vf_im[VF_CHUNK] __attribute__((aligned(64)));
+static _Thread_local double vf_a[VF_CHUNK] __attribute__((aligned(64)));
+static _Thread_local double vf_b[VF_CHUNK] __attribute__((aligned(64)));
+static _Thread_local double vf_c[VF_CHUNK] __attribute__((aligned(64)));
+
+/* vf_re, vf_im -> vf_a = modulus. vf_b and vf_c are scratch. */
+static void batch_moduli(int m) {
+    int special = 0;
+    for (int i = 0; i < m; ++i) {
+        double x = vf_re[i], y = vf_im[i];
+        double ax = fabs(x), ay = fabs(y);
+        double mx = ax > ay ? ax : ay;
+        double mn = ax > ay ? ay : ax;
+        if (!(mx > 0.0)) {
+            vf_b[i] = 0.0;
+            vf_c[i] = 0.0;
+            continue;
+        }
+        if (mx > 1e300) { special = 1; break; }
+        double r = mn / mx;
+        vf_b[i] = 1.0 + r * r;
+        vf_c[i] = mx;
+    }
+    if (special) {
+        for (int i = 0; i < m; ++i) vf_a[i] = hypot(vf_re[i], vf_im[i]);
+        return;
+    }
+    int mm = m;
+    vvsqrt(vf_b, vf_b, &mm);
+    for (int i = 0; i < m; ++i)
+        vf_a[i] = vf_c[i] == 0.0 ? 0.0 : vf_b[i] * vf_c[i];
+}
+
+static void batch_clog(const double complex *z, double complex *out, int n) {
+    while (n > 0) {
+        int m = n > VF_CHUNK ? VF_CHUNK : n;
+        for (int i = 0; i < m; ++i) {
+            vf_re[i] = creal(z[i]);
+            vf_im[i] = cimag(z[i]);
+        }
+        batch_moduli(m);
+        int mm = m;
+        vvlog(vf_b, vf_a, &mm);
+        vvatan2(vf_c, vf_im, vf_re, &mm);
+        for (int i = 0; i < m; ++i)
+            out[i] = vf_b[i] + I * vf_c[i];
+        z += m;
+        out += m;
+        n -= m;
+    }
+}
+
+static void batch_csqrt(const double complex *z, double complex *out, int n) {
+    while (n > 0) {
+        int m = n > VF_CHUNK ? VF_CHUNK : n;
+        for (int i = 0; i < m; ++i) {
+            vf_re[i] = creal(z[i]);
+            vf_im[i] = cimag(z[i]);
+        }
+        batch_moduli(m);
+        for (int i = 0; i < m; ++i) {
+            double a = vf_re[i];
+            double r = vf_a[i];
+            vf_b[i] = a >= 0.0 ? 0.5 * (r + a) : 0.5 * (r - a);
+        }
+        int mm = m;
+        vvsqrt(vf_b, vf_b, &mm);
+        for (int i = 0; i < m; ++i) {
+            double a = vf_re[i], b = vf_im[i], t = vf_b[i];
+            if (a == 0.0 && b == 0.0) {
+                out[i] = 0.0;
+            } else if (a >= 0.0) {
+                out[i] = t == 0.0 ? 0.0 : t + I * (0.5 * b / t);
+            } else {
+                double im = copysign(t, b);
+                out[i] = im == 0.0 ? 0.0 : (0.5 * b / im) + I * im;
+            }
+        }
+        z += m;
+        out += m;
+        n -= m;
+    }
+}
+
+static void batch_cexp(const double complex *z, double complex *out, int n) {
+    while (n > 0) {
+        int m = n > VF_CHUNK ? VF_CHUNK : n;
+        for (int i = 0; i < m; ++i) {
+            vf_re[i] = creal(z[i]);
+            vf_im[i] = cimag(z[i]);
+        }
+        int mm = m;
+        vvexp(vf_a, vf_re, &mm);
+        vvsincos(vf_b, vf_c, vf_im, &mm);
+        for (int i = 0; i < m; ++i)
+            out[i] = vf_a[i] * vf_c[i] + I * (vf_a[i] * vf_b[i]);
+        z += m;
+        out += m;
+        n -= m;
+    }
+}
+#endif
+
 static int nig_many(const es4mgh *E, int nq, const double *x,
                     double *ccdf, double *es) {
     const int nn = E->nnode;
@@ -1457,12 +1753,25 @@ static int nig_many(const es4mgh *E, int nq, const double *x,
         for (int i = 0; i < nn; ++i)
             chi[qi * nn + i] = E->chi_base[i] + I * (E->u[i] * twoq);
     }
+#if defined(__APPLE__)
+    for (int t = 0; t < N; ++t) {
+        int i = t % nn;
+        zc[t] = chi[t] * E->psi_node[i];
+    }
+    batch_csqrt(zc, zc, N);
+#else
     for (int t = 0; t < N; ++t) {
         int i = t % nn;
         zc[t] = csqrt(chi[t] * E->psi_node[i]);
     }
+#endif
+#if defined(__APPLE__)
+    batch_clog(zc, lz, N);
+    batch_clog(chi, lc, N);
+#else
     for (int t = 0; t < N; ++t) lz[t] = clog(zc[t]);
     for (int t = 0; t < N; ++t) lc[t] = clog(chi[t]);
+#endif
     const double log_half_pi = log(0.5 * PI);
     for (int t = 0; t < N; ++t) {
         int i = t % nn;
@@ -1470,7 +1779,11 @@ static int nig_many(const es4mgh *E, int nq, const double *x,
         double complex logK = -zc[t] + 0.5 * (log_half_pi - lz[t]);
         lz[t] = LOG2 - 0.25 * lrat + logK - E->LK2 + E->lrho[i];
     }
+#if defined(__APPLE__)
+    batch_cexp(lz, Ec, N);
+#else
     for (int t = 0; t < N; ++t) Ec[t] = cexp(lz[t]);
+#endif
     for (int qi = 0; qi < nq; ++qi) {
         double Ic = 0.0, Ip = 0.0;
         for (int i = 0; i < nn; ++i) {
@@ -1526,11 +1839,20 @@ static int psi_many(const es4mgh *E, int nq, const double *x,
         for (int i = 0; i < nn; ++i)
             chi[qi * nn + i] = E->chi_base[i] + I * (2.0 * E->u[i] * q);
     }
+#if defined(__APPLE__)
+    batch_clog(chi, lm0, N);
+    for (int t = 0; t < N; ++t) {
+        int i = t % nn;
+        lm0[t] = lam * lm0[t] + c0 + E->lrho[i];
+    }
+    batch_cexp(lm0, Ec, N);
+#else
     for (int t = 0; t < N; ++t) {
         int i = t % nn;
         lm0[t] = lam * clog(chi[t]) + c0 + E->lrho[i];
     }
     for (int t = 0; t < N; ++t) Ec[t] = cexp(lm0[t]);
+#endif
     for (int qi = 0; qi < nq; ++qi) {
         double Ic = 0.0, Ip = 0.0;
         for (int i = 0; i < nn; ++i) {
@@ -1544,6 +1866,168 @@ static int psi_many(const es4mgh *E, int nq, const double *x,
                     double complex e2 = (e0 * chi[t] * chi[t]) * E->psi_c2;
                     acc += cimag(e2 * E->a1p[i]);
                 }
+                Ip += E->wo[i] * acc;
+            }
+        }
+        write_tail(E, Ic, Ip, do_es, ccdf ? ccdf + qi : NULL, es ? es + qi : NULL);
+    }
+    return 1;
+}
+
+static int half_degree(double nu) {
+    nu = fabs(nu);
+    double nh = round(nu - 0.5);
+    if (nh >= 0.0 && nh < 80.0 && fabs(nu - (nh + 0.5)) < 1e-10) return (int)nh;
+    return -1;
+}
+
+/* Finite sum inside log(exp(z) K_{n+1/2}(z)). Same coefficients as log_scaled_K. */
+static double complex half_poly(int n, double complex z) {
+    double coef = 1.0;
+    double complex sum = 1.0;
+    double complex zk = 1.0;
+    double complex twoz = 2.0 * z;
+    for (int k = 1; k <= n; ++k) {
+        coef *= (double)(n + k) * (double)(n - k + 1) / (double)k;
+        zk *= twoz;
+        sum += coef / zk;
+    }
+    return sum;
+}
+
+static int half_many(const es4mgh *E, int nq, const double *x,
+                     double *ccdf, double *es) {
+    const int nn = E->nnode;
+    if (nn <= 0 || nq <= 0) return 1;
+    int n0 = half_degree(E->lam);
+    int n1 = half_degree(E->lam + 1.0);
+    int n2 = half_degree(E->lam + 2.0);
+    if (n0 < 0 || n1 < 0 || n2 < 0) return 0;
+    if ((long)nq * nn > FAST_MAX) {
+        int tile = FAST_MAX / nn;
+        if (tile < 1) return 0;
+        for (int i = 0; i < nq; i += tile) {
+            int m = nq - i;
+            if (m > tile) m = tile;
+            if (!half_many(E, m, x + i, ccdf ? ccdf + i : NULL, es ? es + i : NULL))
+                return 0;
+        }
+        return 1;
+    }
+    const int N = nq * nn;
+    const int do_es = es != NULL;
+    const int do_a1 = do_es && E->need_a1;
+    const double lam = E->lam;
+    size_t bytes = (size_t)N * 10u * sizeof(double complex) + 256;
+    unsigned char *block = (unsigned char *)arena_acquire(bytes);
+    if (!block) return 0;
+    size_t off = 0;
+#define TAKE(T, name) T *name = (T *)(block + off); off = (off + (size_t)N * sizeof(T) + 15u) & ~(size_t)15u
+    TAKE(double complex, chi);
+    TAKE(double complex, ps);
+    TAKE(double complex, z);
+    TAKE(double complex, sum0);
+    TAKE(double complex, sum1);
+    TAKE(double complex, sum2);
+    TAKE(double complex, quot);
+    TAKE(double complex, e0);
+    TAKE(double complex, e1);
+    TAKE(double complex, e2);
+#undef TAKE
+    for (int qi = 0; qi < nq; ++qi) {
+        double q = x[qi] - E->kk;
+        for (int i = 0; i < nn; ++i) {
+            int t = qi * nn + i;
+            double complex c = E->chi_base[i] + I * (2.0 * E->u[i] * q);
+            double complex p = E->psi_node[i];
+            if ((creal(c) == 0.0 && cimag(c) == 0.0) ||
+                (creal(p) == 0.0 && cimag(p) == 0.0))
+                return 0;
+            double complex prod = c * p;
+            if (creal(prod) < 0.0 &&
+                fabs(cimag(prod)) <= 1e-14 * (1.0 + fabs(creal(prod))))
+                return 0;
+            chi[t] = c;
+            ps[t] = p;
+            z[t] = prod;
+        }
+    }
+#if defined(__APPLE__)
+    batch_csqrt(z, z, N);
+#else
+    for (int t = 0; t < N; ++t) z[t] = csqrt(z[t]);
+#endif
+    /* clog(chi/psi), not clog(chi)-clog(psi): the half-integer multiple of
+       2*pi*i is not killed by the later exponential. */
+    for (int t = 0; t < N; ++t) chi[t] = chi[t] / ps[t];
+#if defined(__APPLE__)
+    batch_clog(chi, chi, N);
+#else
+    for (int t = 0; t < N; ++t) chi[t] = clog(chi[t]);
+#endif
+    for (int t = 0; t < N; ++t) {
+        sum0[t] = half_poly(n0, z[t]);
+        quot[t] = PI / (2.0 * z[t]);
+        if (do_es) sum1[t] = half_poly(n1, z[t]);
+        if (do_a1) sum2[t] = half_poly(n2, z[t]);
+    }
+#if defined(__APPLE__)
+    batch_clog(quot, quot, N);
+    batch_clog(sum0, sum0, N);
+    if (do_es) batch_clog(sum1, sum1, N);
+    if (do_a1) batch_clog(sum2, sum2, N);
+#else
+    for (int t = 0; t < N; ++t) quot[t] = clog(quot[t]);
+    for (int t = 0; t < N; ++t) sum0[t] = clog(sum0[t]);
+    if (do_es) for (int t = 0; t < N; ++t) sum1[t] = clog(sum1[t]);
+    if (do_a1) for (int t = 0; t < N; ++t) sum2[t] = clog(sum2[t]);
+#endif
+    for (int t = 0; t < N; ++t) {
+        int i = t % nn;
+        double complex lrat = chi[t];
+        double complex base = -E->LK2 + E->lrho[i];
+        double complex logK0 = 0.5 * quot[t] + sum0[t];
+        e0[t] = LOG2 + 0.5 * lam * lrat + (logK0 - z[t]) + base;
+        if (do_es) {
+            double complex logK1 = 0.5 * quot[t] + sum1[t];
+            e1[t] = LOG2 + 0.5 * (lam + 1.0) * lrat + (logK1 - z[t]) + base;
+        }
+        if (do_a1) {
+            double complex logK2 = 0.5 * quot[t] + sum2[t];
+            e2[t] = LOG2 + 0.5 * (lam + 2.0) * lrat + (logK2 - z[t]) + base;
+        }
+    }
+    /* imag_exp returns 0 when the real part is outside [-700, 700].
+       A phase of -800 makes cexp vanish, which is the same contribution. */
+    for (int t = 0; t < N; ++t) {
+        double r0 = creal(e0[t]);
+        if (r0 < -700.0 || r0 > 700.0) e0[t] = -800.0;
+        if (do_es) {
+            double r1 = creal(e1[t]);
+            if (r1 < -700.0 || r1 > 700.0) e1[t] = -800.0;
+        }
+        if (do_a1) {
+            double r2 = creal(e2[t]);
+            if (r2 < -700.0 || r2 > 700.0) e2[t] = -800.0;
+        }
+    }
+#if defined(__APPLE__)
+    batch_cexp(e0, e0, N);
+    if (do_es) batch_cexp(e1, e1, N);
+    if (do_a1) batch_cexp(e2, e2, N);
+#else
+    for (int t = 0; t < N; ++t) e0[t] = cexp(e0[t]);
+    if (do_es) for (int t = 0; t < N; ++t) e1[t] = cexp(e1[t]);
+    if (do_a1) for (int t = 0; t < N; ++t) e2[t] = cexp(e2[t]);
+#endif
+    for (int qi = 0; qi < nq; ++qi) {
+        double Ic = 0.0, Ip = 0.0;
+        for (int i = 0; i < nn; ++i) {
+            int t = qi * nn + i;
+            Ic += E->wo[i] * cimag(e0[t]);
+            if (do_es) {
+                double acc = cimag(e0[t] * E->a2p[i]) + cimag(e1[t] * E->lrp[i]);
+                if (do_a1) acc += cimag(e2[t] * E->a1p[i]);
                 Ip += E->wo[i] * acc;
             }
         }
@@ -1612,13 +2096,37 @@ static double clenshaw(int m, const double *a, double t) {
     return t * u1 - u2 + a[0];
 }
 
-static void interp_on(int m, double mid, double half, const double *yq,
-                      int n, const double *x, double *y) {
-    double a[96];
-    if (m < 1 || m > 96) return;
-    cheb_coeffs(m, yq, a);
+/* Four independent Clenshaw recurrences. The points do not depend on each
+   other, so the compiler can issue them together. Same recurrence as clenshaw. */
+static void clenshaw_many(int m, const double *a, double mid, double half,
+                          int n, const double *x, double *y) {
+    if (m < 1) return;
     double invh = half == 0.0 ? 0.0 : 1.0 / half;
-    for (int i = 0; i < n; ++i)
+    int i = 0;
+    for (; i + 3 < n; i += 4) {
+        double t0 = (x[i] - mid) * invh;
+        double t1 = (x[i + 1] - mid) * invh;
+        double t2 = (x[i + 2] - mid) * invh;
+        double t3 = (x[i + 3] - mid) * invh;
+        double u20 = 0.0, u10 = 0.0, u21 = 0.0, u11 = 0.0;
+        double u22 = 0.0, u12 = 0.0, u23 = 0.0, u13 = 0.0;
+        for (int k = m - 1; k >= 1; --k) {
+            double ak = a[k];
+            double n0 = 2.0 * t0 * u10 - u20 + ak;
+            double n1 = 2.0 * t1 * u11 - u21 + ak;
+            double n2 = 2.0 * t2 * u12 - u22 + ak;
+            double n3 = 2.0 * t3 * u13 - u23 + ak;
+            u20 = u10; u10 = n0;
+            u21 = u11; u11 = n1;
+            u22 = u12; u12 = n2;
+            u23 = u13; u13 = n3;
+        }
+        y[i] = t0 * u10 - u20 + a[0];
+        y[i + 1] = t1 * u11 - u21 + a[0];
+        y[i + 2] = t2 * u12 - u22 + a[0];
+        y[i + 3] = t3 * u13 - u23 + a[0];
+    }
+    for (; i < n; ++i)
         y[i] = clenshaw(m, a, (x[i] - mid) * invh);
 }
 
@@ -1646,14 +2154,22 @@ static void eval_prepared(const es4mgh *E, int n, const double *x,
         return;
     }
 #ifdef _OPENMP
+    /* Contiguous slices, same shape as the Apple pool. Each slice runs
+       eval_chunk, so a half-integer order stays on the batched kernel.
+       One threshold per iteration would fall through to the scalar
+       integrand and drop that kernel whenever threads > 1. */
+    if (nthreads > 64) nthreads = 64;
+    Chunk stack_chunks[64];
+    int base = n / nthreads, rem = n % nthreads, cursor = 0;
+    for (int t = 0; t < nthreads; ++t) {
+        int len = base + (t < rem ? 1 : 0);
+        stack_chunks[t] = (Chunk){ E, x, ccdf, es, E->kk, cursor, cursor + len };
+        cursor += len;
+    }
     omp_set_num_threads(nthreads);
 #pragma omp parallel for schedule(static)
-    for (int i = 0; i < n; ++i) {
-        double q = x[i] - E->kk;
-        double *cc = ccdf ? ccdf + i : NULL;
-        double *ee = es ? es + i : NULL;
-        eval_point(E, q, cc, ee);
-    }
+    for (int t = 0; t < nthreads; ++t)
+        eval_chunk(&stack_chunks[t]);
 #elif defined(__APPLE__)
     if (nthreads > 64) nthreads = 64;
     Chunk stack_chunks[64];
@@ -1746,14 +2262,13 @@ static void gauss_ibp(const es4mgh *E, double q, double T, double *tc, double *t
 }
 
 static void gauss_panel_nodes(double *gx, double *gw) {
-    static double x[12], w[12];
-    static int ready = 0;
-    if (!ready) {
-        gauss_legendre(12, x, w);
-        ready = 1;
+    const double *tab = gl_table(12);
+    if (!tab) {
+        gauss_legendre(12, gx, gw);
+        return;
     }
-    memcpy(gx, x, 12 * sizeof(double));
-    memcpy(gw, w, 12 * sizeof(double));
+    memcpy(gx, tab, 12 * sizeof(double));
+    memcpy(gw, tab + 12, 12 * sizeof(double));
 }
 
 static void gauss_panel_osc(const es4mgh *E, double q, double *ccdf, double *es) {
@@ -1969,8 +2484,9 @@ void es4mgh_eval(es4mgh *E, int n, const double *x,
         if (ccdf) cheb_coeffs(m, ccq, ac);
         if (es) cheb_coeffs(m, esq, ae);
         if (series_settled(m, ccdf ? ac : NULL, es ? ae : NULL, es ? esq : NULL)) {
-            if (ccdf) interp_on(m, mid, half, ccq, n, x, ccdf);
-            if (es) interp_on(m, mid, half, esq, n, x, es);
+            /* ac and ae are already the coefficients. Interpolate those. */
+            if (ccdf) clenshaw_many(m, ac, mid, half, n, x, ccdf);
+            if (es) clenshaw_many(m, ae, mid, half, n, x, es);
             return;
         }
         if (m >= n || m >= 96) {

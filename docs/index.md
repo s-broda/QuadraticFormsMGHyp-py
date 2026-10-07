@@ -41,7 +41,7 @@ pip install QuadraticFormsMGHyp
 
 Python 3.9 or newer is required. Wheels cover Linux x86_64 and arm64 (manylinux and musllinux), macOS x86_64 and arm64, and Windows amd64. Windows arm64 wheels start at Python 3.11. NumPy is installed as a dependency.
 
-A source install needs a C compiler and Python headers, because the extension is compiled on the machine. On macOS the build links Accelerate. On Windows it uses clang-cl from LLVM and the Microsoft linker. Install [LLVM](https://github.com/llvm/llvm-project/releases) and the Microsoft C++ build tools.
+A source install needs a C compiler and Python headers, because the extension is compiled on the machine. On macOS the build links Accelerate. On Linux it links OpenMP, and OpenBLAS when that library is installed. On Windows it uses clang-cl from LLVM and the Microsoft linker. Install [LLVM](https://github.com/llvm/llvm-project/releases) and the Microsoft C++ build tools.
 
 ```bash
 pip install "git+https://github.com/s-broda/QuadraticFormsMGHyp-py.git"

@@ -12,6 +12,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext as _build_ext
@@ -98,6 +99,92 @@ def _drop(flags, rejected):
     return [flag for flag in flags if flag.upper() not in rejected]
 
 
+def _cc_probe(extra):
+    """True when the C compiler accepts these flags for compile and link."""
+    cc = os.environ.get("CC", "cc")
+    td = tempfile.mkdtemp(prefix="es4probe-")
+    try:
+        src = os.path.join(td, "p.c")
+        out = os.path.join(td, "p")
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write("int main(void){return 0;}\n")
+        ran = subprocess.run(
+            [cc, "-O2", src, "-o", out, *extra],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return ran.returncode == 0
+    except OSError:
+        return False
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+
+def _linux_openblas():
+    """Include and link flags for a working OpenBLAS, or None.
+
+    The wheel build installs the library. A machine without it keeps the
+    Jacobi eigensolver and the plain product, so the extension still builds.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    cflags = []
+    libs = []
+    pkg = shutil.which("pkg-config")
+    if pkg:
+        for name in ("openblas", "blas-openblas"):
+            if subprocess.call(
+                [pkg, "--exists", name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ) != 0:
+                continue
+            cflags = subprocess.check_output([pkg, "--cflags", name], text=True).split()
+            libs = subprocess.check_output([pkg, "--libs", name], text=True).split()
+            break
+    if not libs:
+        libs = ["-lopenblas"]
+        for inc in (
+            "/usr/include/openblas",
+            "/usr/include/x86_64-linux-gnu/openblas",
+            "/usr/include/aarch64-linux-gnu/openblas",
+        ):
+            if os.path.isfile(os.path.join(inc, "cblas.h")):
+                cflags = ["-I" + inc]
+                break
+    cc = os.environ.get("CC", "cc")
+    src_text = (
+        "#include <cblas.h>\n"
+        "void dsyev_(char *, char *, int *, double *, int *, double *, double *, int *, int *);\n"
+        "int main(void) {\n"
+        "  double A[4] = {2, 1, 1, 2}, C[4], w[2], work[16];\n"
+        "  int n = 2, lda = 2, lwork = 16, info = 0;\n"
+        "  char jobz = 'V', uplo = 'U';\n"
+        "  cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 2, 2, 2, 1.0, A, 2, A, 2, 0.0, C, 2);\n"
+        "  dsyev_(&jobz, &uplo, &n, A, &lda, w, work, &lwork, &info);\n"
+        "  return info;\n"
+        "}\n"
+    )
+    td = tempfile.mkdtemp(prefix="es4blas-")
+    try:
+        src = os.path.join(td, "p.c")
+        out = os.path.join(td, "p")
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write(src_text)
+        ran = subprocess.run(
+            [cc, "-O2", src, "-o", out, *cflags, *libs, "-lm"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if ran.returncode != 0:
+            return None
+    except OSError:
+        return None
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+    return cflags, libs
+
+
 class build_ext(_build_ext):
     def build_extensions(self):
         if self.compiler.compiler_type == "msvc":
@@ -133,6 +220,25 @@ class build_ext(_build_ext):
                 compile_args.append("-fblocks")
                 link_args.append("-framework")
                 link_args.append("Accelerate")
+            elif sys.platform.startswith("linux"):
+                # OpenMP splits the scalar and half-integer integrands into
+                # the same contiguous slices the Apple pool uses. NIG,
+                # psi = 0, and the fast general series return before that
+                # split. Apple stays on GCD.
+                if _cc_probe(["-fopenmp"]):
+                    compile_args.append("-fopenmp")
+                    link_args.append("-fopenmp")
+                blas = _linux_openblas()
+                if blas:
+                    cflags, libs = blas
+                    compile_args.append("-DES4_HAVE_CBLAS")
+                    compile_args.extend(cflags)
+                    link_args.extend(libs)
+                print(
+                    "QuadraticFormsMGHyp: linux OpenMP={0} OpenBLAS={1}".format(
+                        "-fopenmp" in compile_args, blas is not None
+                    )
+                )
             for ext in self.extensions:
                 ext.extra_compile_args = compile_args
                 ext.extra_link_args = link_args

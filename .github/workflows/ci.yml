@@ -17,6 +17,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install OpenBLAS
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev pkg-config
       - name: Locate clang-cl
         if: runner.os == 'Windows'
         shell: pwsh

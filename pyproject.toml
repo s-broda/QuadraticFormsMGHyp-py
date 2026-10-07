@@ -39,6 +39,9 @@ Changelog = "https://github.com/s-broda/QuadraticFormsMGHyp-py/blob/main/CHANGEL
 Julia = "https://github.com/s-broda/QuadraticFormsMGHyp.jl"
 Fortran = "https://github.com/s-broda/es4mgh"
 
+[tool.cibuildwheel.linux]
+before-all = "bash -c 'set -e; if command -v apk >/dev/null; then apk add --no-cache openblas-dev pkgconf; elif command -v dnf >/dev/null; then dnf install -y openblas-devel pkgconf-pkg-config; elif command -v yum >/dev/null; then yum install -y openblas-devel pkgconfig; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libopenblas-dev pkg-config; fi'"
+
 [tool.cibuildwheel]
 skip = [
     "pp*",
